@@ -1,0 +1,58 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: operator
+spec:
+  namespace: default
+  skipDelete: true
+  timeouts:
+    assert: 5m
+  steps:
+  - name: Deploy operator
+    try:
+    - apply:
+        resource:
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            labels:
+              control-plane: controller-manager
+              app.kubernetes.io/name: api-extension
+              app.kubernetes.io/managed-by: kustomize
+            name: api-extension-system
+    - script:
+        content: kubectl apply -f ../../../../package/bundle-config-${TAG}.yaml
+    - script:
+        content: kubectl apply -f ../../../../package/bundle-${TAG}.yaml
+    - assert:
+        resource:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: api-extension-controller-manager
+            namespace: api-extension-system
+          status:
+            readyReplicas: 1
+    - assert:
+        resource:
+          apiVersion: v1
+          kind: Endpoints
+          metadata:
+            name: api-extension-v1-api-extension
+            namespace: api-extension-system
+          ~.(subsets):
+            (length(addresses) > `0`): true
+    - assert:
+        resource:
+          apiVersion: apiregistration.k8s.io/v1
+          kind: APIService
+          metadata:
+            name: v1.apiserver.api-extension.harikube.info
+            annotations:
+              cert-manager.io/inject-ca-from: api-extension-system/api-extension-v1-api-extension-cert
+          status:
+            conditions:
+            - message: all checks passed
+              reason: Passed
+              status: "True"
+              type: Available

@@ -1,0 +1,19 @@
+# Adds namespace to all resources.
+namespace: api-extension-system
+
+# Value of this field is prepended to the
+# names of all resources, e.g. a deployment named
+# "wordpress" becomes "alices-wordpress".
+# Note that it should also match with the prefix (text before '-') of the namespace
+# field above.
+namePrefix: api-extension-
+
+generatorOptions:
+  disableNameSuffixHash: true
+  
+secretGenerator:
+- name: harikube-connection
+  files:
+  - harikube.url
+  - harikube.crt
+  - harikube.key

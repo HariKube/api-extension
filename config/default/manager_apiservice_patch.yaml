@@ -1,0 +1,58 @@
+- op: add
+  path: /spec/template/spec/containers/0/args/-
+  value: --apiserver-port=:7443
+
+- op: add
+  path: /spec/template/spec/containers/0/args/-
+  value: --apiserver-cert-file=/tmp/k8s-apiserver-server/serving-certs/tls.crt
+
+- op: add
+  path: /spec/template/spec/containers/0/args/-
+  value: --apiserver-key-file=/tmp/k8s-apiserver-server/serving-certs/tls.key
+
+- op: add
+  path: /spec/template/spec/containers/0/args/-
+  value: --harikube-url=/tmp/harikube-connection/harikube.url
+
+- op: add
+  path: /spec/template/spec/containers/0/args/-
+  value: --harikube-cert-file=/tmp/harikube-connection/harikube.crt
+
+- op: add
+  path: /spec/template/spec/containers/0/args/-
+  value: --harikube-key-file=/tmp/harikube-connection/harikube.key
+
+- op: add
+  path: /spec/template/spec/containers/0/ports/-
+  value:
+    containerPort: 7443
+    name: apiserver
+    protocol: TCP
+
+- op: add
+  path: /spec/template/spec/containers/0/volumeMounts/-
+  value:
+    mountPath: /tmp/k8s-apiserver-server/serving-certs
+    name: apiserver-certs
+    readOnly: true
+
+- op: add
+  path: /spec/template/spec/containers/0/volumeMounts/-
+  value:
+    mountPath: /tmp/harikube-connection
+    name: harikube-connection
+    readOnly: true
+
+- op: add
+  path: /spec/template/spec/volumes/-
+  value:
+    name: apiserver-certs
+    secret:
+      secretName: v1-api-extension-tls
+
+- op: add
+  path: /spec/template/spec/volumes/-
+  value:
+    name: harikube-connection
+    secret:
+      secretName: api-extension-harikube-connection

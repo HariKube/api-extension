@@ -1,0 +1,4 @@
+## Append samples of your project ##
+resources:
+- api-extension_v1_count.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples

@@ -1,0 +1,9 @@
+apiVersion: api-extension.harikube.info/v1
+kind: Count
+metadata:
+  labels:
+    app.kubernetes.io/name: api-extension
+    app.kubernetes.io/managed-by: kustomize
+  name: count-sample
+spec:
+  # TODO(user): Add fields here

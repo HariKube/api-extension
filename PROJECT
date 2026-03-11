@@ -8,4 +8,13 @@ layout:
 - go.kubebuilder.io/v4
 projectName: api-extension
 repo: github.com/harikube/api-extension
+resources:
+- api:
+    crdVersion: v1
+    namespaced: true
+  domain: harikube.info
+  group: api-extension
+  kind: Count
+  path: github.com/harikube/api-extension/api/v1
+  version: v1
 version: "3"

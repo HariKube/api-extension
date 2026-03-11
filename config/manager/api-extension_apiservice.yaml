@@ -1,0 +1,16 @@
+apiVersion: apiregistration.k8s.io/v1
+kind: APIService
+metadata:
+  name: v1.apiserver.api-extension.harikube.info
+  annotations:
+    cert-manager.io/inject-ca-from: SERVICE_NAME/SERVICE_NAMESPACE
+spec:
+  group: apiserver.api-extension.harikube.info
+  version: v1
+  groupPriorityMinimum: 1000
+  versionPriority: 10
+  service:
+    name: v1-api-extension
+    namespace: system
+    port: 443
+  caBundle: ""

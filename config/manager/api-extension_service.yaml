@@ -1,0 +1,38 @@
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: v1-api-extension-ca
+  namespace: system
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: v1-api-extension-cert
+  namespace: system
+spec:
+  secretName: v1-api-extension-tls
+  issuerRef:
+    name: api-extension-v1-api-extension-ca
+  commonName: api-extension-v1-api-extension.api-extension-system.svc
+  dnsNames:
+  - SERVICE_NAME.SERVICE_NAMESPACE.svc
+  - SERVICE_NAME.SERVICE_NAMESPACE.svc.cluster.local
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app.kubernetes.io/name: api-extension
+    app.kubernetes.io/managed-by: kustomize
+  name: v1-api-extension
+  namespace: system
+spec:
+  ports:
+    - port: 443
+      protocol: TCP
+      targetPort: 7443
+  selector:
+    control-plane: controller-manager
+    app.kubernetes.io/name: api-extension

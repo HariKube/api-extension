@@ -34,6 +34,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
+
+	apiextensionv1 "github.com/harikube/api-extension/api/v1"
+	"github.com/harikube/api-extension/internal/apiserver"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -45,6 +48,7 @@ var (
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
+	utilruntime.Must(apiextensionv1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -57,6 +61,12 @@ func main() {
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
+	var apiServerPort string
+	var apiServerCertFile string
+	var apiServerKeyFile string
+	var harikubeUrl string
+	var harikubeCertFile string
+	var harikubeKeyFile string
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -75,6 +85,12 @@ func main() {
 	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
+	flag.StringVar(&apiServerPort, "apiserver-port", ":7443", "The port the API server serves at. Default is 7443.")
+	flag.StringVar(&apiServerCertFile, "apiserver-cert-file", "", "The TLS cert file for the API server to use.")
+	flag.StringVar(&apiServerKeyFile, "apiserver-key-file", "", "The TLS key file for the API server to use.")
+	flag.StringVar(&harikubeUrl, "harikube-url", "", "The URL of the HariKube backend.")
+	flag.StringVar(&harikubeCertFile, "harikube-cert-file", "", "The CRT of the HariKube backend.")
+	flag.StringVar(&harikubeKeyFile, "harikube-key-file", "", "The KEY of the HariKube backend.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -182,6 +198,11 @@ func main() {
 	}
 	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
 		setupLog.Error(err, "unable to set up ready check")
+		os.Exit(1)
+	}
+
+	if err := mgr.Add(apiserver.New(apiServerPort, apiServerCertFile, apiServerKeyFile, harikubeUrl, harikubeCertFile, harikubeKeyFile)); err != nil {
+		setupLog.Error(err, "unable to add API server to manager")
 		os.Exit(1)
 	}
 

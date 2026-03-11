@@ -15,7 +15,7 @@ namePrefix: api-extension-
 #    someName: someValue
 
 resources:
-#- ../crd
+# - ../crd
 - ../rbac
 - ../manager
 # [WEBHOOK] To enable webhook, uncomment all the sections with [WEBHOOK] prefix including the one in
@@ -53,10 +53,85 @@ patches:
 #- path: manager_webhook_patch.yaml
 #  target:
 #    kind: Deployment
+- path: manager_apiservice_patch.yaml
+  target:
+    kind: Deployment
+
 
 # [CERTMANAGER] To enable cert-manager, uncomment all sections with 'CERTMANAGER' prefix.
 # Uncomment the following replacements to add the cert-manager CA injection annotations
-#replacements:
+replacements:
+ - source:
+     kind: Certificate
+     group: cert-manager.io
+     version: v1
+     name: v1-api-extension-cert
+     fieldPath: .metadata.namespace
+   targets:
+     - select:
+         kind: APIService
+         group: apiregistration.k8s.io
+         version: v1
+         name: v1.apiserver.api-extension.harikube.info
+       fieldPaths:
+         - .metadata.annotations.[cert-manager.io/inject-ca-from]
+       options:
+         delimiter: /
+         index: 0
+ - source:
+     kind: Certificate
+     group: cert-manager.io
+     version: v1
+     name: v1-api-extension-cert
+     fieldPath: .metadata.name
+   targets:
+     - select:
+         kind: APIService
+         group: apiregistration.k8s.io
+         version: v1
+         name: v1.apiserver.api-extension.harikube.info
+       fieldPaths:
+         - .metadata.annotations.[cert-manager.io/inject-ca-from]
+       options:
+         delimiter: /
+         index: 1
+
+ - source:
+     kind: Service
+     version: v1
+     name: v1-api-extension
+     fieldPath: .metadata.name
+   targets:
+     - select:
+         kind: Certificate
+         group: cert-manager.io
+         version: v1
+         name: v1-api-extension-cert
+       fieldPaths:
+         - .spec.dnsNames.0
+         - .spec.dnsNames.1
+       options:
+         delimiter: '.'
+         index: 0
+         create: true
+ - source:
+     kind: Service
+     version: v1
+     name: v1-api-extension
+     fieldPath: .metadata.namespace
+   targets:
+     - select:
+         kind: Certificate
+         group: cert-manager.io
+         version: v1
+         name: v1-api-extension-cert
+       fieldPaths:
+         - .spec.dnsNames.0
+         - .spec.dnsNames.1
+       options:
+         delimiter: '.'
+         index: 1
+         create: true
 # - source: # Uncomment the following block to enable certificates for metrics
 #     kind: Service
 #     version: v1

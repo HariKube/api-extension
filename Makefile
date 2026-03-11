@@ -76,28 +76,33 @@ test: manifests generate fmt vet setup-envtest ## Run tests.
 # CertManager is installed by default; skip with:
 # - CERT_MANAGER_INSTALL_SKIP=true
 KIND_CLUSTER ?= api-extension-test-e2e
+KUBE_VERSION ?= v1.34.0
 
-.PHONY: setup-test-e2e
-setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
+.PHONY: setup-test-integration
+setup-test-integration: cleanup-test-integration ## Set up a Kind cluster for integration tests if it does not exist
 	@command -v $(KIND) >/dev/null 2>&1 || { \
-		echo "Kind is not installed. Please install Kind manually."; \
+		echo "Kind is not installed. Please execute make deps."; \
 		exit 1; \
 	}
-	@case "$$($(KIND) get clusters)" in \
-		*"$(KIND_CLUSTER)"*) \
-			echo "Kind cluster '$(KIND_CLUSTER)' already exists. Skipping creation." ;; \
-		*) \
-			echo "Creating Kind cluster '$(KIND_CLUSTER)'..."; \
-			$(KIND) create cluster --name $(KIND_CLUSTER) ;; \
-	esac
 
-.PHONY: test-e2e
-test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expected an isolated environment using Kind.
-	KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) go test -tags=e2e ./test/e2e/ -v -ginkgo.v
-	$(MAKE) cleanup-test-e2e
+	$(KIND) create cluster --name $(KIND_CLUSTER) --config test/integration/kind-configs/config-$(KUBE_VERSION).yaml
 
-.PHONY: cleanup-test-e2e
-cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
+	$(KUBECTL) wait --for=condition=Ready node/$(KIND_CLUSTER)-control-plane --timeout=120s
+
+	$(CHAINSAW) test --test-dir test/integration/00-init
+
+.PHONY: test-integration
+test-integration: setup-test-integration _test-integration-build #_test-integration-run #cleanup-test-integration
+
+_test-integration-build:
+	TAG=$(TAG) $(CHAINSAW) test --test-dir test/integration/01-build
+	TAG=$(TAG) $(CHAINSAW) test --test-dir test/integration/02-deploy
+
+_test-integration-run:
+	$(CHAINSAW) test --test-dir test/integration/03-user
+
+.PHONY: cleanup-test-integration
+cleanup-test-integration: ## Tear down the Kind cluster used for integration tests
 	@$(KIND) delete cluster --name $(KIND_CLUSTER)
 
 .PHONY: lint
@@ -132,6 +137,10 @@ docker-build: ## Build docker image with the manager.
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
 	$(CONTAINER_TOOL) push ${IMG}
+
+.PHONY: docker-load
+docker-load: ## Loading docker image to Kind.
+	$(KIND) load docker-image -n $(KIND_CLUSTER) ${IMG}
 
 # PLATFORMS defines the target platforms for the manager image be built to provide support to multiple
 # architectures. (i.e. make docker-buildx IMG=myregistry/mypoperator:0.0.1). To use this option you need to:
@@ -251,4 +260,6 @@ package: manifests generate
 	cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
 
 	rm -f package/bundle-$(TAG).yaml ; $(KUSTOMIZE) build config/default >> package/bundle-$(TAG).yaml
+
+	rm -f package/bundle-config-$(TAG).yaml ; $(KUSTOMIZE) build config/config >> package/bundle-config-$(TAG).yaml
 	
