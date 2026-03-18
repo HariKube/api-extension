@@ -97,6 +97,8 @@ test-integration: setup-test-integration _test-integration-build _test-integrati
 _test-integration-build:
 	$(VCLUTER) connect harikube
 
+	cp -u test/integration/harikube-config/* config/config
+
 	TAG=$(TAG) $(CHAINSAW) test --test-dir test/integration/01-build
 	TAG=$(TAG) $(CHAINSAW) test --test-dir test/integration/02-deploy
 
