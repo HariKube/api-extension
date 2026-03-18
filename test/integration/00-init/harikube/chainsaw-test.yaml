@@ -11,7 +11,7 @@ spec:
   - name: Deploy HariKube
     try:
     - apply:
-        file: vcluster-harikube-sqlite-workload-release-v0.14.11.yaml
+        file: https://github.com/HariKube/harikube/releases/download/release-v0.14.14/vcluster-harikube-sqlite-workload-release-v0.14.14.yaml
     - assert:
         resource:
           apiVersion: apps/v1

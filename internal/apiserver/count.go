@@ -13,6 +13,7 @@ import (
 	apiextv1 "github.com/harikube/api-extension/api/v1"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.yaml.in/yaml/v2"
+	authorizationv1 "k8s.io/api/authorization/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	metav1beta1 "k8s.io/apimachinery/pkg/apis/meta/v1beta1"
@@ -20,6 +21,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/discovery/cached/memory"
+	authclientv1 "k8s.io/client-go/kubernetes/typed/authorization/v1"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/restmapper"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -29,12 +31,17 @@ var countLogger = logf.Log.WithName("api-extension.count")
 
 // nolint:gocyclo
 func getCountHandler(kubeConfig *rest.Config, harikubeClient *clientv3.Client, coreResources []string) (*kaf.APIKind, error) {
-	kubeClient, err := discovery.NewDiscoveryClientForConfig(kubeConfig)
+	discoveryKubeClient, err := discovery.NewDiscoveryClientForConfig(kubeConfig)
 	if err != nil {
 		return nil, err
 	}
 
-	mapper := restmapper.NewDeferredDiscoveryRESTMapper(memory.NewMemCacheClient(kubeClient))
+	mapper := restmapper.NewDeferredDiscoveryRESTMapper(memory.NewMemCacheClient(discoveryKubeClient))
+
+	authClient, err := authclientv1.NewForConfig(kubeConfig)
+	if err != nil {
+		return nil, err
+	}
 
 	getResurce := func(gvk schema.GroupVersionKind) (*meta.RESTMapping, error) {
 		m, err := mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
@@ -105,6 +112,37 @@ func getCountHandler(kubeConfig *rest.Config, harikubeClient *clientv3.Client, c
 					gvk.Group = parts[0]
 					gvk.Version = parts[1]
 				}
+				gvr := schema.GroupVersionResource{
+					Group:    gvk.Group,
+					Version:  gvk.Version,
+					Resource: pluralize.Plural(strings.ToLower(gvk.Kind)),
+				}
+
+				ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+				defer cancel()
+
+				sar := authorizationv1.SubjectAccessReview{
+					Spec: authorizationv1.SubjectAccessReviewSpec{
+						ResourceAttributes: &authorizationv1.ResourceAttributes{
+							Namespace: namespace,
+							Verb:      "list",
+							Group:     gvr.Group,
+							Resource:  gvr.Resource,
+						},
+						User:   r.Header.Get("X-Remote-User"),
+						Groups: r.Header.Values("X-Remote-Group"),
+					},
+				}
+
+				if result, err := authClient.SubjectAccessReviews().Create(ctx, &sar, metav1.CreateOptions{}); err != nil {
+					http.Error(w, "resource not found", http.StatusNotFound)
+
+					return
+				} else if !result.Status.Allowed {
+					http.Error(w, "resource forbidden", http.StatusForbidden)
+
+					return
+				}
 
 				resource, err := getResurce(gvk)
 				if err != nil {
@@ -125,7 +163,7 @@ func getCountHandler(kubeConfig *rest.Config, harikubeClient *clientv3.Client, c
 				if _, ok := coreResourcesMap[gvk.Group]; !ok {
 					prefix += gvk.Group + "/"
 				}
-				prefix += pluralize.Plural(strings.ToLower(gvk.Kind)) + "/"
+				prefix += gvr.Resource + "/"
 				if namespace != "" {
 					prefix += namespace + "/"
 				}
@@ -143,9 +181,6 @@ func getCountHandler(kubeConfig *rest.Config, harikubeClient *clientv3.Client, c
 				if fieldSelector != "" {
 					opts = append(opts, clientv3.WithFieldSelector(fieldSelector))
 				}
-
-				ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-				defer cancel()
 
 				countResp, err := harikubeClient.Get(ctx, prefix, opts...)
 				if err != nil {
@@ -275,7 +310,7 @@ func getCountHandler(kubeConfig *rest.Config, harikubeClient *clientv3.Client, c
 					}
 				}
 
-				containerRaw := []byte{}
+				var containerRaw []byte
 				switch contentType {
 				case "application/yaml", "application/x-yaml", "text/yaml", "text/x-yaml":
 					if containerRaw, err = yaml.Marshal(&container); err != nil {
@@ -286,6 +321,8 @@ func getCountHandler(kubeConfig *rest.Config, harikubeClient *clientv3.Client, c
 
 					w.Header().Set("Content-Type", "application/yaml")
 				case "application/json":
+					fallthrough
+				default:
 					if containerRaw, err = json.Marshal(&container); err != nil {
 						http.Error(w, err.Error(), http.StatusInternalServerError)
 
@@ -293,8 +330,6 @@ func getCountHandler(kubeConfig *rest.Config, harikubeClient *clientv3.Client, c
 					}
 
 					w.Header().Set("Content-Type", "application/json")
-				default:
-
 				}
 
 				w.WriteHeader(http.StatusOK)

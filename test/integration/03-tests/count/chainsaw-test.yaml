@@ -1,9 +1,52 @@
 apiVersion: chainsaw.kyverno.io/v1alpha1
-kind: Count
+kind: Test
 metadata:
   name: tests
 spec:
+  namespace: chainsaw-pod-test
   timeouts:
-    assert: 5m
+    assert: 1m
   steps:
+  - name: Pod test
+    try:
+    - script:
+        content: kubectl create configmap -n chainsaw-pod-test all-namespace --from-literal="count=$(kubectl get counts -A --field-selector=apiVersion=v1,kind=Pod -o jsonpath='{.items[0].spec.count}')"
+    - assert:
+        resource:
+          apiVersion: v1
+          data:
+            count: "5"
+          kind: ConfigMap
+          metadata:
+            name: all-namespace
+    - script:
+        content: kubectl create configmap -n chainsaw-pod-test api-extension-system-namespace --from-literal="count=$(kubectl get counts -n api-extension-system --field-selector=apiVersion=v1,kind=Pod -o jsonpath='{.items[0].spec.count}')"
+    - assert:
+        resource:
+          apiVersion: v1
+          data:
+            count: "1"
+          kind: ConfigMap
+          metadata:
+            name: api-extension-system-namespace
+    - script:
+        content: kubectl create configmap -n chainsaw-pod-test label-selector --from-literal="count=$(kubectl get counts -A -l control-plane=controller-manager --field-selector=apiVersion=v1,kind=Pod -o jsonpath='{.items[0].spec.count}')"
+    - assert:
+        resource:
+          apiVersion: v1
+          data:
+            count: "1"
+          kind: ConfigMap
+          metadata:
+            name: label-selector
+    - script:
+        content: kubectl create configmap -n chainsaw-pod-test field-selector --from-literal="count=$(kubectl get counts -A --field-selector=apiVersion=v1,kind=Pod,metadata.namespace=api-extension-system -o jsonpath='{.items[0].spec.count}')"
+    - assert:
+        resource:
+          apiVersion: v1
+          data:
+            count: "1"
+          kind: ConfigMap
+          metadata:
+            name: field-selector
 

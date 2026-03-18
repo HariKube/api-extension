@@ -91,19 +91,16 @@ setup-test-integration: cleanup-test-integration ## Set up a Kind cluster for in
 
 	$(CHAINSAW) test --test-dir test/integration/00-init
 
-.PHONY: test-integration
-test-integration: setup-test-integration _test-integration-build _test-integration-run cleanup-test-integration
-
-_test-integration-build:
 	$(VCLUTER) connect harikube
-
-	cp -u test/integration/harikube-config/* config/config
 
 	TAG=$(TAG) $(CHAINSAW) test --test-dir test/integration/01-build
 	TAG=$(TAG) $(CHAINSAW) test --test-dir test/integration/02-deploy
 
+.PHONY: test-integration
+test-integration: setup-test-integration _test-integration-run cleanup-test-integration
+
 _test-integration-run:
-# 	$(CHAINSAW) test --test-dir test/integration/03-tests
+	$(CHAINSAW) test --test-dir test/integration/03-tests
 
 .PHONY: cleanup-test-integration
 cleanup-test-integration: ## Tear down the Kind cluster used for integration tests
