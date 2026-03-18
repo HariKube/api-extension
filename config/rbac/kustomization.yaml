@@ -22,7 +22,3 @@ resources:
 # default, aiding admins in cluster management. Those roles are
 # not used by the api-extension itself. You can comment the following lines
 # if you do not want those helpers be installed with your Project.
-- count_admin_role.yaml
-- count_editor_role.yaml
-- count_viewer_role.yaml
-

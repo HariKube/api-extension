@@ -14,7 +14,7 @@ resources:
     namespaced: true
   domain: harikube.info
   group: api-extension
-  kind: Count
+  kind: CountResponse
   path: github.com/harikube/api-extension/api/v1
   version: v1
 version: "3"

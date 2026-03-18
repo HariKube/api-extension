@@ -1,0 +1,23 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: harikube
+spec:
+  namespace: default
+  skipDelete: true
+  timeouts:
+    assert: 5m
+  steps:
+  - name: Deploy HariKube
+    try:
+    - apply:
+        file: vcluster-harikube-sqlite-workload-release-v0.14.11.yaml
+    - assert:
+        resource:
+          apiVersion: apps/v1
+          kind: StatefulSet
+          metadata:
+            name: harikube
+            namespace: harikube
+          status:
+            availableReplicas: 1

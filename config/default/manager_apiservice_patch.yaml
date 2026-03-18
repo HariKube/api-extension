@@ -1,5 +1,18 @@
 - op: add
   path: /spec/template/spec/containers/0/args/-
+  value: --core-resources=$(CORE_RESOURCES)
+
+- op: add
+  path: /spec/template/spec/containers/0/env
+  value:
+    - name: CORE_RESOURCES
+      valueFrom:
+        configMapKeyRef:
+          name: api-extension-core-resources
+          key: resources
+
+- op: add
+  path: /spec/template/spec/containers/0/args/-
   value: --apiserver-port=:7443
 
 - op: add
@@ -12,7 +25,7 @@
 
 - op: add
   path: /spec/template/spec/containers/0/args/-
-  value: --harikube-url=/tmp/harikube-connection/harikube.url
+  value: --harikube-urls=/tmp/harikube-connection/harikube.url
 
 - op: add
   path: /spec/template/spec/containers/0/args/-
@@ -21,6 +34,10 @@
 - op: add
   path: /spec/template/spec/containers/0/args/-
   value: --harikube-key-file=/tmp/harikube-connection/harikube.key
+
+- op: add
+  path: /spec/template/spec/containers/0/args/-
+  value: --harikube-ca-file=/tmp/harikube-connection/harikube.ca
 
 - op: add
   path: /spec/template/spec/containers/0/ports/-

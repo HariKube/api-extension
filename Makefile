@@ -92,14 +92,16 @@ setup-test-integration: cleanup-test-integration ## Set up a Kind cluster for in
 	$(CHAINSAW) test --test-dir test/integration/00-init
 
 .PHONY: test-integration
-test-integration: setup-test-integration _test-integration-build #_test-integration-run #cleanup-test-integration
+test-integration: setup-test-integration _test-integration-build _test-integration-run cleanup-test-integration
 
 _test-integration-build:
+	$(VCLUTER) connect harikube
+
 	TAG=$(TAG) $(CHAINSAW) test --test-dir test/integration/01-build
 	TAG=$(TAG) $(CHAINSAW) test --test-dir test/integration/02-deploy
 
 _test-integration-run:
-	$(CHAINSAW) test --test-dir test/integration/03-user
+# 	$(CHAINSAW) test --test-dir test/integration/03-tests
 
 .PHONY: cleanup-test-integration
 cleanup-test-integration: ## Tear down the Kind cluster used for integration tests
@@ -131,7 +133,7 @@ run: manifests generate fmt vet ## Run a controller from your host.
 # (i.e. docker build --platform linux/arm64). However, you must enable docker buildKit for it.
 # More info: https://docs.docker.com/develop/develop-images/build_enhancements/
 .PHONY: docker-build
-docker-build: ## Build docker image with the manager.
+docker-build: generate ## Build docker image with the manager.
 	$(CONTAINER_TOOL) build -t ${IMG} .
 
 .PHONY: docker-push
@@ -160,7 +162,7 @@ docker-buildx: ## Build and push docker image for the manager for cross-platform
 	rm Dockerfile.cross
 
 .PHONY: build-installer
-build-installer: manifests generate## Generate a consolidated YAML with CRDs and deployment.
+build-installer: manifests generate ## Generate a consolidated YAML with CRDs and deployment.
 	mkdir -p dist
 	cd config/manager && "$(KUSTOMIZE)" edit set image controller=${IMG}
 	"$(KUSTOMIZE)" build config/default > dist/install.yaml
@@ -172,22 +174,27 @@ ifndef ignore-not-found
 endif
 
 .PHONY: install
-install: manifests## Install CRDs into the K8s cluster specified in ~/.kube/config.
+install: manifests ## Install CRDs into the K8s cluster specified in ~/.kube/config.
 	@out="$$( "$(KUSTOMIZE)" build config/crd 2>/dev/null || true )"; \
 	if [ -n "$$out" ]; then echo "$$out" | "$(KUBECTL)" apply -f -; else echo "No CRDs to install; skipping."; fi
 
 .PHONY: uninstall
-uninstall: manifests## Uninstall CRDs from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
+uninstall: manifests ## Uninstall CRDs from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
 	@out="$$( "$(KUSTOMIZE)" build config/crd 2>/dev/null || true )"; \
 	if [ -n "$$out" ]; then echo "$$out" | "$(KUBECTL)" delete --ignore-not-found=$(ignore-not-found) -f -; else echo "No CRDs to delete; skipping."; fi
 
 .PHONY: deploy
-deploy: manifests## Deploy controller to the K8s cluster specified in ~/.kube/config.
+deploy: manifests ## Deploy controller to the K8s cluster specified in ~/.kube/config.
 	cd config/manager && "$(KUSTOMIZE)" edit set image controller=${IMG}
+	"$(KUSTOMIZE)" build config/config | "$(KUBECTL)" apply -f -
 	"$(KUSTOMIZE)" build config/default | "$(KUBECTL)" apply -f -
 
+.PHONY: redeploy
+redeploy: deploy ## Redeploy controller to the K8s cluster specified in ~/.kube/config.
+	$(KUBECTL) delete po -n api-extension-system -l control-plane=controller-manager --ignore-not-found=true
+
 .PHONY: undeploy
-undeploy:## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
+undeploy: ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
 	"$(KUSTOMIZE)" build config/default | "$(KUBECTL)" delete --ignore-not-found=$(ignore-not-found) -f -
 
 ##@ Dependencies
@@ -204,6 +211,7 @@ KIND ?= $(DEVBOXBIN)/kind
 KUSTOMIZE ?= $(DEVBOXBIN)/kustomize
 CONTROLLER_GEN ?= $(DEVBOXBIN)/controller-gen
 CHAINSAW ?= $(DEVBOXBIN)/chainsaw
+VCLUTER ?= $(DEVBOXBIN)/vcluster
 ENVTEST ?= $(LOCALBIN)/setup-envtest
 GOLANGCI_LINT = $(DEVBOXBIN)/golangci-lint
 

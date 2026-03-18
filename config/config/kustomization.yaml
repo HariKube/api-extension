@@ -8,6 +8,10 @@ namespace: api-extension-system
 # field above.
 namePrefix: api-extension-
 
+resources:
+- namespace.yaml
+- core-resources.yaml
+
 generatorOptions:
   disableNameSuffixHash: true
   
@@ -17,3 +21,4 @@ secretGenerator:
   - harikube.url
   - harikube.crt
   - harikube.key
+  - harikube.ca

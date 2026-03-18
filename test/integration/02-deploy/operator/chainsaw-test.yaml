@@ -10,6 +10,15 @@ spec:
   steps:
   - name: Deploy operator
     try:
+    - assert:
+        resource:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: cert-manager-webhook
+            namespace: cert-manager
+          status:
+            availableReplicas: 1
     - apply:
         resource:
           apiVersion: v1

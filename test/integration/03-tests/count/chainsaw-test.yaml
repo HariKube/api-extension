@@ -1,0 +1,9 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Count
+metadata:
+  name: tests
+spec:
+  timeouts:
+    assert: 5m
+  steps:
+

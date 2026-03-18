@@ -20,6 +20,8 @@ import (
 	"crypto/tls"
 	"flag"
 	"os"
+	"path/filepath"
+	"strings"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -64,9 +66,12 @@ func main() {
 	var apiServerPort string
 	var apiServerCertFile string
 	var apiServerKeyFile string
-	var harikubeUrl string
+	var coreResources string
+	var harikubeUrls string
 	var harikubeCertFile string
 	var harikubeKeyFile string
+	var harikubeCAFile string
+	var harikubeSkipVerify bool
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -88,9 +93,12 @@ func main() {
 	flag.StringVar(&apiServerPort, "apiserver-port", ":7443", "The port the API server serves at. Default is 7443.")
 	flag.StringVar(&apiServerCertFile, "apiserver-cert-file", "", "The TLS cert file for the API server to use.")
 	flag.StringVar(&apiServerKeyFile, "apiserver-key-file", "", "The TLS key file for the API server to use.")
-	flag.StringVar(&harikubeUrl, "harikube-url", "", "The URL of the HariKube backend.")
+	flag.StringVar(&coreResources, "core-resources", "", "The comma separated list of core resources.")
+	flag.StringVar(&harikubeUrls, "harikube-urls", "", "The comma separated list of the HariKube backend URLs.")
 	flag.StringVar(&harikubeCertFile, "harikube-cert-file", "", "The CRT of the HariKube backend.")
 	flag.StringVar(&harikubeKeyFile, "harikube-key-file", "", "The KEY of the HariKube backend.")
+	flag.StringVar(&harikubeCAFile, "harikube-ca-file", "", "The CA of the HariKube backend.")
+	flag.BoolVar(&harikubeSkipVerify, "harikube-skip-verify", false, "The TLS skip verify flag of the HariKube backend.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -98,6 +106,38 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
+	if rawHarikubeUrls, err := os.ReadFile(filepath.Clean(harikubeUrls)); err == nil {
+		harikubeUrls = string(rawHarikubeUrls)
+	}
+	setupLog.Info("HariKube", "urls", harikubeUrls)
+
+	if harikubeCertFile != "" {
+		if info, err := os.Stat(harikubeCertFile); err != nil && !os.IsNotExist(err) {
+			setupLog.Error(err, "unable to read file", "path", harikubeCertFile)
+			os.Exit(1)
+		} else if info.Size() == 0 {
+			harikubeCertFile = ""
+		}
+	}
+
+	if harikubeKeyFile != "" {
+		if info, err := os.Stat(filepath.Clean(harikubeKeyFile)); err != nil && !os.IsNotExist(err) {
+			setupLog.Error(err, "unable to read file", "path", harikubeKeyFile)
+			os.Exit(1)
+		} else if info.Size() == 0 {
+			harikubeKeyFile = ""
+		}
+	}
+
+	if harikubeCAFile != "" {
+		if info, err := os.Stat(filepath.Clean(harikubeCAFile)); err != nil && !os.IsNotExist(err) {
+			setupLog.Error(err, "unable to read file", "path", harikubeCAFile)
+			os.Exit(1)
+		} else if info.Size() == 0 {
+			harikubeCAFile = ""
+		}
+	}
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
 	// due to its vulnerabilities. More specifically, disabling http/2 will
@@ -201,7 +241,18 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := mgr.Add(apiserver.New(apiServerPort, apiServerCertFile, apiServerKeyFile, harikubeUrl, harikubeCertFile, harikubeKeyFile)); err != nil {
+	if err := mgr.Add(
+		apiserver.New(
+			ctrl.GetConfigOrDie(),
+			apiServerPort,
+			apiServerCertFile,
+			apiServerKeyFile,
+			strings.Split(coreResources, ","),
+			strings.Split(harikubeUrls, ","),
+			harikubeCertFile,
+			harikubeKeyFile,
+			harikubeCAFile,
+			harikubeSkipVerify)); err != nil {
 		setupLog.Error(err, "unable to add API server to manager")
 		os.Exit(1)
 	}

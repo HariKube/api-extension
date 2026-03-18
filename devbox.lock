@@ -376,6 +376,54 @@
           "store_path": "/nix/store/67d9slhrk957fjq5dqxwmd8qcjxcz3wg-kyverno-chainsaw-0.2.13"
         }
       }
+    },
+    "vcluster@0.29.1": {
+      "last_modified": "2026-01-23T17:20:52Z",
+      "resolved": "github:NixOS/nixpkgs/a1bab9e494f5f4939442a57a58d0449a109593fe#vcluster",
+      "source": "devbox-search",
+      "version": "0.29.1",
+      "systems": {
+        "aarch64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/q683cf9k9x9yqr5nalhn3ph27rsj09w1-vcluster-0.29.1",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/q683cf9k9x9yqr5nalhn3ph27rsj09w1-vcluster-0.29.1"
+        },
+        "aarch64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/wyfjczalafj4r4ir2a3l9xp3jzv0nsh5-vcluster-0.29.1",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/wyfjczalafj4r4ir2a3l9xp3jzv0nsh5-vcluster-0.29.1"
+        },
+        "x86_64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/rif6k7aiklslk2c7nvzlnwhyw9dzvd6y-vcluster-0.29.1",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/rif6k7aiklslk2c7nvzlnwhyw9dzvd6y-vcluster-0.29.1"
+        },
+        "x86_64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/rvbwqrfnj1snd46f914ayd9nzx5dh80f-vcluster-0.29.1",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/rvbwqrfnj1snd46f914ayd9nzx5dh80f-vcluster-0.29.1"
+        }
+      }
     }
   }
 }
