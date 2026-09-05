@@ -39,6 +39,7 @@ kubectl get --raw "/apis/apiserver.api-extension.harikube.info/v1/namespaces/def
 
 ### Transaction
 
+```bash
 cat <<EOF | kubectl get --raw "/apis/apiserver.api-extension.harikube.info/v1/namespaces/default/transactions" -X POST -H "Content-Type: application/yaml" -f -
 apiVersion: apiserver.api-extension.harikube.info/v1
 kind: Transaction
@@ -57,9 +58,11 @@ spec:
         name: wallet-BBB
       ...
 EOF
+```
 
 ### Custom Queries
 
+```bash
 cat <<EOF | kubectl get --raw "/apis/apiserver.api-extension.harikube.info/v1/namespaces/default/queries" -X POST -H "Content-Type: application/yaml" -f -
 apiVersion: apiserver.api-extension.harikube.info/v1
 kind: Query
@@ -70,3 +73,4 @@ spec:
   params:
   - f47ac10b-58cc-4372-a567-0e02b2c3d479
 EOF
+```
