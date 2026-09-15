@@ -81,7 +81,7 @@ func getCountHandler(authClient *authorizationclientv1.AuthorizationV1Client, ha
 
 				gvk := schema.GroupVersionKind{Kind: kind}
 				if parts := strings.Split(apiVersion, "/"); len(parts) == 1 {
-					gvk.Version = parts[0]
+					gvk.Group = parts[0]
 				} else {
 					gvk.Group = parts[0]
 					gvk.Version = parts[1]
@@ -100,6 +100,7 @@ func getCountHandler(authClient *authorizationclientv1.AuthorizationV1Client, ha
 						Namespace: namespace,
 						Verb:      "list",
 						Group:     gvr.Group,
+						Version:   gvr.Version,
 						Resource:  gvr.Resource,
 					}, r.Header); err != nil {
 					http.Error(w, "resource not found", http.StatusNotFound)
