@@ -104,6 +104,11 @@ func (s *searchAPIServer) Start(ctx context.Context) (err error) {
 		return err
 	}
 
+	queryHandler, err := getQueryHandler(authClient, s.kubeConfig, harikubeClient, s.coreResources, mapper)
+	if err != nil {
+		return err
+	}
+
 	s.Server = *kaf.NewServer(kaf.ServerConfig{
 		Port:     s.port,
 		CertFile: s.certFile,
@@ -113,6 +118,7 @@ func (s *searchAPIServer) Start(ctx context.Context) (err error) {
 		APIKinds: []kaf.APIKind{
 			*countHandler,
 			*transactionHandler,
+			*queryHandler,
 		},
 	})
 
