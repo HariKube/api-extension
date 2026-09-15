@@ -33,14 +33,10 @@ kubectl get --raw "/apis/apiserver.api-extension.harikube.info/counts?fieldSelec
 kubectl get --raw "/apis/apiserver.api-extension.harikube.info/namespaces/default/counts?fieldSelector=apiVersion=cert-manager.io,kind=Issuer&labelSelector=key=value"
 ```
 
-## Future Endpoints
-
-> Examples are based on `kubectl`, but any client can do the same.
-
 ### Transaction
 
 ```bash
-cat <<EOF | kubectl get --raw "/apis/apiserver.api-extension.harikube.info/namespaces/default/transactions" -X POST -H "Content-Type: application/yaml" -f -
+cat <<EOF | kubectl create --raw "/apis/apiserver.api-extension.harikube.info/namespaces/default/transactions" -X POST -H "Content-Type: application/yaml" -f -
 apiVersion: apiserver.api-extension.harikube.info
 kind: Transaction
 metadata:
@@ -51,22 +47,30 @@ spec:
     kind: Configmap
     metadata:
       name: user-payment-AAA
+      resourceVersion: "3"
   update:
   - apiVersion: v1
     kind: Secret
     metadata:
       name: wallet-AAA
+      resourceVersion: "6"
   - apiVersion: v1
     kind: Secret
     metadata:
       name: wallet-BBB
+      resourceVersion: "2"
   delete:
   - apiVersion: v1
     kind: Secret
     metadata:
       name: token-BBB
+      resourceVersion: "9"
 EOF
 ```
+
+## Future Endpoints
+
+> Examples are based on `kubectl`, but any client can do the same.
 
 ### Custom Queries
 

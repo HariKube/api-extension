@@ -20,7 +20,14 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-var countLogger = logf.Log.WithName("api-extension.count")
+var (
+	countLogger              = logf.Log.WithName("api-extension.count")
+	countSubjectAccessReview = subjectAccessReview
+	countGetResource         = getResurce
+	countGet                 = func(ctx context.Context, client *clientv3.Client, key string, opts ...clientv3.OpOption) (*clientv3.GetResponse, error) {
+		return client.Get(ctx, key, opts...)
+	}
+)
 
 // nolint:gocyclo
 func getCountHandler(authClient *authorizationclientv1.AuthorizationV1Client, kubeConfig *rest.Config, harikubeClient *clientv3.Client, coreResources []string, mapper *restmapper.DeferredDiscoveryRESTMapper) (*kaf.APIKind, error) {
@@ -89,7 +96,7 @@ func getCountHandler(authClient *authorizationclientv1.AuthorizationV1Client, ku
 				ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 				defer cancel()
 
-				if result, err := subjectAccessReview(ctx, authClient,
+				if result, err := countSubjectAccessReview(ctx, authClient,
 					&authorizationv1.ResourceAttributes{
 						Namespace: namespace,
 						Verb:      "list",
@@ -105,7 +112,7 @@ func getCountHandler(authClient *authorizationclientv1.AuthorizationV1Client, ku
 					return
 				}
 
-				resource, err := getResurce(gvk, mapper)
+				resource, err := countGetResource(gvk, mapper)
 				if err != nil {
 					http.Error(w, err.Error(), http.StatusInternalServerError)
 
@@ -143,7 +150,7 @@ func getCountHandler(authClient *authorizationclientv1.AuthorizationV1Client, ku
 					opts = append(opts, clientv3.WithFieldSelector(fieldSelector))
 				}
 
-				countResp, err := harikubeClient.Get(ctx, prefix, opts...)
+				countResp, err := countGet(ctx, harikubeClient, prefix, opts...)
 				if err != nil {
 					http.Error(w, err.Error(), http.StatusInternalServerError)
 
