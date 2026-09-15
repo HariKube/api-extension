@@ -21,10 +21,7 @@ import (
 )
 
 func TestCountListHandlerRejectsMissingAPIVersion(t *testing.T) {
-	handler, err := getCountHandler(nil, nil, nil, nil)
-	if err != nil {
-		t.Fatalf("unexpected error creating handler: %v", err)
-	}
+	handler := getCountHandler(&authorizationclientv1.AuthorizationV1Client{}, &clientv3.Client{}, nil, &restmapper.DeferredDiscoveryRESTMapper{})
 
 	req := httptest.NewRequest(http.MethodGet, "/counts?fieldSelector=kind=Pod", nil)
 	rec := httptest.NewRecorder()
@@ -42,10 +39,7 @@ func TestCountListHandlerRejectsMissingAPIVersion(t *testing.T) {
 }
 
 func TestCountListHandlerRejectsMissingKind(t *testing.T) {
-	handler, err := getCountHandler(nil, nil, nil, nil)
-	if err != nil {
-		t.Fatalf("unexpected error creating handler: %v", err)
-	}
+	handler := getCountHandler(&authorizationclientv1.AuthorizationV1Client{}, &clientv3.Client{}, nil, &restmapper.DeferredDiscoveryRESTMapper{})
 
 	req := httptest.NewRequest(http.MethodGet, "/counts?fieldSelector=apiVersion=v1", nil)
 	rec := httptest.NewRecorder()
@@ -84,10 +78,7 @@ func TestCountListHandlerReturnsForbiddenWhenUnauthorized(t *testing.T) {
 		return nil, nil
 	}
 
-	handler, err := getCountHandler(nil, nil, nil, nil)
-	if err != nil {
-		t.Fatalf("getCountHandler() error = %v", err)
-	}
+	handler := getCountHandler(&authorizationclientv1.AuthorizationV1Client{}, &clientv3.Client{}, nil, &restmapper.DeferredDiscoveryRESTMapper{})
 
 	req := httptest.NewRequest(http.MethodGet, "/counts?fieldSelector=apiVersion=v1,kind=Pod", nil)
 	rec := httptest.NewRecorder()
@@ -140,10 +131,7 @@ func TestCountListHandlerReturnsCountResponseList(t *testing.T) {
 		return &clientv3.GetResponse{Header: &etcdserverpb.ResponseHeader{Revision: 11}, Count: 3}, nil
 	}
 
-	handler, err := getCountHandler(nil, nil, []string{""}, nil)
-	if err != nil {
-		t.Fatalf("getCountHandler() error = %v", err)
-	}
+	handler := getCountHandler(&authorizationclientv1.AuthorizationV1Client{}, &clientv3.Client{}, []string{""}, &restmapper.DeferredDiscoveryRESTMapper{})
 
 	req := httptest.NewRequest(http.MethodGet, "/counts?fieldSelector=apiVersion=v1,kind=Pod,metadata.name=demo&labelSelector=app%3Ddemo", nil)
 	req.Header.Set("X-Remote-User", "alice")
@@ -231,10 +219,7 @@ func TestCountListHandlerClearsNamespaceForClusterScopedResources(t *testing.T) 
 		return &clientv3.GetResponse{Header: &etcdserverpb.ResponseHeader{Revision: 17}, Count: 5}, nil
 	}
 
-	handler, err := getCountHandler(nil, nil, []string{""}, nil)
-	if err != nil {
-		t.Fatalf("getCountHandler() error = %v", err)
-	}
+	handler := getCountHandler(&authorizationclientv1.AuthorizationV1Client{}, &clientv3.Client{}, []string{""}, &restmapper.DeferredDiscoveryRESTMapper{})
 
 	req := httptest.NewRequest(http.MethodGet, "/counts?fieldSelector=apiVersion=rbac.authorization.k8s.io/v1,kind=ClusterRole", nil)
 	rec := httptest.NewRecorder()

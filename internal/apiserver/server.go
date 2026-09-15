@@ -94,16 +94,8 @@ func (s *searchAPIServer) Start(ctx context.Context) (err error) {
 
 	mapper := restmapper.NewDeferredDiscoveryRESTMapper(memory.NewMemCacheClient(discoveryKubeClient))
 
-	countHandler, err := getCountHandler(authClient, harikubeClient, s.coreResources, mapper)
-	if err != nil {
-		return err
-	}
-
-	transactionHandler, err := getTransactionHandler(authClient, harikubeClient, s.coreResources, mapper)
-	if err != nil {
-		return err
-	}
-
+	countHandler := getCountHandler(authClient, harikubeClient, s.coreResources, mapper)
+	transactionHandler := getTransactionHandler(authClient, harikubeClient, s.coreResources, mapper)
 	queryHandler := getQueryHandler(authClient, harikubeClient)
 
 	s.Server = *kaf.NewServer(kaf.ServerConfig{

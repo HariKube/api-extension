@@ -66,10 +66,7 @@ spec:
 		}, nil
 	}
 
-	handler, err := getTransactionHandler(nil, nil, []string{""}, nil)
-	if err != nil {
-		t.Fatalf("getTransactionHandler() error = %v", err)
-	}
+	handler := getTransactionHandler(&authorizationclientv1.AuthorizationV1Client{}, &clientv3.Client{}, []string{""}, &restmapper.DeferredDiscoveryRESTMapper{})
 
 	req := httptest.NewRequest(http.MethodPost, "/apis/apiserver.api-extension.harikube.info/namespaces/default/transactions", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/yaml")
@@ -183,10 +180,7 @@ spec:
 		}, nil
 	}
 
-	handler, err := getTransactionHandler(nil, nil, []string{""}, nil)
-	if err != nil {
-		t.Fatalf("getTransactionHandler() error = %v", err)
-	}
+	handler := getTransactionHandler(&authorizationclientv1.AuthorizationV1Client{}, &clientv3.Client{}, []string{""}, &restmapper.DeferredDiscoveryRESTMapper{})
 
 	req := httptest.NewRequest(http.MethodPost, "/apis/apiserver.api-extension.harikube.info/namespaces/default/transactions", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/yaml")
@@ -241,10 +235,7 @@ func TestTransactionCreateHandlerRejectsEmptySpec(t *testing.T) {
 		return nil, nil
 	}
 
-	handler, err := getTransactionHandler(nil, nil, []string{""}, nil)
-	if err != nil {
-		t.Fatalf("getTransactionHandler() error = %v", err)
-	}
+	handler := getTransactionHandler(&authorizationclientv1.AuthorizationV1Client{}, &clientv3.Client{}, []string{""}, &restmapper.DeferredDiscoveryRESTMapper{})
 
 	req := httptest.NewRequest(http.MethodPost, "/apis/apiserver.api-extension.harikube.info/namespaces/default/transactions", strings.NewReader("kind: Transaction\nmetadata:\n  name: missing-spec\nspec: {}\n"))
 	rec := httptest.NewRecorder()
@@ -283,10 +274,7 @@ func TestTransactionCreateHandlerReturnsForbiddenWhenUnauthorized(t *testing.T) 
 		return nil, nil
 	}
 
-	handler, err := getTransactionHandler(nil, nil, []string{""}, nil)
-	if err != nil {
-		t.Fatalf("getTransactionHandler() error = %v", err)
-	}
+	handler := getTransactionHandler(&authorizationclientv1.AuthorizationV1Client{}, &clientv3.Client{}, []string{""}, &restmapper.DeferredDiscoveryRESTMapper{})
 
 	req := httptest.NewRequest(http.MethodPost, "/apis/apiserver.api-extension.harikube.info/namespaces/default/transactions", strings.NewReader(`apiVersion: apiserver.api-extension.harikube.info/v1
 kind: Transaction
@@ -324,10 +312,7 @@ func TestTransactionCreateHandlerRejectsInvalidBody(t *testing.T) {
 		return nil, nil
 	}
 
-	handler, err := getTransactionHandler(nil, nil, []string{""}, nil)
-	if err != nil {
-		t.Fatalf("getTransactionHandler() error = %v", err)
-	}
+	handler := getTransactionHandler(&authorizationclientv1.AuthorizationV1Client{}, &clientv3.Client{}, []string{""}, &restmapper.DeferredDiscoveryRESTMapper{})
 
 	req := httptest.NewRequest(http.MethodPost, "/apis/apiserver.api-extension.harikube.info/namespaces/default/transactions", strings.NewReader(": invalid"))
 	rec := httptest.NewRecorder()
@@ -404,10 +389,7 @@ spec:
 		}, nil
 	}
 
-	handler, err := getTransactionHandler(nil, nil, []string{""}, nil)
-	if err != nil {
-		t.Fatalf("getTransactionHandler() error = %v", err)
-	}
+	handler := getTransactionHandler(&authorizationclientv1.AuthorizationV1Client{}, &clientv3.Client{}, []string{""}, &restmapper.DeferredDiscoveryRESTMapper{})
 
 	req := httptest.NewRequest(http.MethodPost, "/apis/apiserver.api-extension.harikube.info/namespaces/default/transactions", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/yaml")
@@ -473,10 +455,7 @@ spec:
 		return nil, nil
 	}
 
-	handler, err := getTransactionHandler(nil, nil, []string{""}, nil)
-	if err != nil {
-		t.Fatalf("getTransactionHandler() error = %v", err)
-	}
+	handler := getTransactionHandler(&authorizationclientv1.AuthorizationV1Client{}, &clientv3.Client{}, []string{""}, &restmapper.DeferredDiscoveryRESTMapper{})
 
 	req := httptest.NewRequest(http.MethodPost, "/apis/apiserver.api-extension.harikube.info/namespaces/default/transactions", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/yaml")

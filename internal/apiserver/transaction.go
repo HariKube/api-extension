@@ -64,7 +64,7 @@ type transactionRequest struct {
 	} `json:"spec" yaml:"spec"`
 }
 
-func getTransactionHandler(authClient *authorizationclientv1.AuthorizationV1Client, harikubeClient *clientv3.Client, coreResources []string, mapper *restmapper.DeferredDiscoveryRESTMapper) (*kaf.APIKind, error) {
+func getTransactionHandler(authClient *authorizationclientv1.AuthorizationV1Client, harikubeClient *clientv3.Client, coreResources []string, mapper *restmapper.DeferredDiscoveryRESTMapper) *kaf.APIKind {
 	coreResourcesMap := map[string]bool{}
 	for i := range coreResources {
 		coreResourcesMap[coreResources[i]] = true
@@ -216,7 +216,7 @@ func getTransactionHandler(authClient *authorizationclientv1.AuthorizationV1Clie
 				}
 			},
 		},
-	}, nil
+	}
 }
 
 func transactionResourceMap(resources map[string][]byte, entry map[string]interface{}, requestNamespace, operation string, coreResourcesMap map[string]bool, mapper *restmapper.DeferredDiscoveryRESTMapper) error {

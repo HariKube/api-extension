@@ -29,7 +29,7 @@ var (
 )
 
 // nolint:gocyclo
-func getCountHandler(authClient *authorizationclientv1.AuthorizationV1Client, harikubeClient *clientv3.Client, coreResources []string, mapper *restmapper.DeferredDiscoveryRESTMapper) (*kaf.APIKind, error) {
+func getCountHandler(authClient *authorizationclientv1.AuthorizationV1Client, harikubeClient *clientv3.Client, coreResources []string, mapper *restmapper.DeferredDiscoveryRESTMapper) *kaf.APIKind {
 	coreResourcesMap := map[string]bool{}
 	for i := range coreResources {
 		coreResourcesMap[coreResources[i]] = true
@@ -217,5 +217,5 @@ func getCountHandler(authClient *authorizationclientv1.AuthorizationV1Client, ha
 				}
 			},
 		},
-	}, nil
+	}
 }
