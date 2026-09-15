@@ -10,8 +10,8 @@ spec:
   steps:
   - name: Deploy HariKube
     try:
-    - apply:
-        file: https://github.com/HariKube/harikube/releases/download/release-v0.14.14/vcluster-harikube-sqlite-workload-release-v0.14.14.yaml
+    - script:
+        content: helm install harikube oci://quay.io/harikube/harikube --version 0.16.3 --namespace=harikube --create-namespace --set vcluster.exportKubeConfig.server=https://harikube.harikube:443 --set middleware.image.tag=dev-v0.16.4-1
     - assert:
         resource:
           apiVersion: apps/v1
