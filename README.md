@@ -47,7 +47,6 @@ spec:
     kind: Configmap
     metadata:
       name: user-payment-AAA
-      resourceVersion: "3"
   update:
   - apiVersion: v1
     kind: Secret
