@@ -3,6 +3,7 @@ package apiserver
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -43,6 +44,23 @@ func getResurce(gvk schema.GroupVersionKind, mapper *restmapper.DeferredDiscover
 	}
 
 	return m, nil
+}
+
+func etcdKeyForGroupVersionKind(gvk schema.GroupVersionKind, namespace string, resource *meta.RESTMapping, coreResources map[string]bool) (string, error) {
+	if resource == nil {
+		return "", fmt.Errorf("resource mapping is required for %s", gvk.String())
+	}
+
+	key := "/registry/"
+	if _, ok := coreResources[gvk.Group]; !ok {
+		key += gvk.Group + "/"
+	}
+	key += resource.Resource.Resource + "/"
+	if resource.Scope.Name() != meta.RESTScopeNameRoot && namespace != "" {
+		key += namespace + "/"
+	}
+
+	return key, nil
 }
 
 func responseContent(headers http.Header) (contentType, contentDetails string) {

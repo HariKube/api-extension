@@ -7,8 +7,10 @@ import (
 	"testing"
 
 	"go.yaml.in/yaml/v2"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	metav1beta1 "k8s.io/apimachinery/pkg/apis/meta/v1beta1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
 func TestResponseContentUsesContentTypeHeader(t *testing.T) {
@@ -154,5 +156,37 @@ func TestTableResponseIgnoresNonTableContent(t *testing.T) {
 	}
 	if container != nil {
 		t.Fatalf("container = %#v, want nil", container)
+	}
+}
+
+func TestEtcdKeyForGroupVersionKindBuildsCoreResourceNamespaceKey(t *testing.T) {
+	gvk := schema.GroupVersionKind{Version: "v1", Kind: "Pod"}
+	resource := &meta.RESTMapping{
+		Resource: schema.GroupVersionResource{Version: "v1", Resource: "pods"},
+		Scope:    meta.RESTScopeNamespace,
+	}
+
+	key, err := etcdKeyForGroupVersionKind(gvk, "default", resource, map[string]bool{"": true})
+	if err != nil {
+		t.Fatalf("etcdKeyForGroupVersionKind() error = %v", err)
+	}
+	if key != "/registry/pods/default/" {
+		t.Fatalf("key = %q, want %q", key, "/registry/pods/default/")
+	}
+}
+
+func TestEtcdKeyForGroupVersionKindBuildsClusterScopedGroupedKey(t *testing.T) {
+	gvk := schema.GroupVersionKind{Group: "rbac.authorization.k8s.io", Version: "v1", Kind: "ClusterRole"}
+	resource := &meta.RESTMapping{
+		Resource: schema.GroupVersionResource{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "clusterroles"},
+		Scope:    meta.RESTScopeRoot,
+	}
+
+	key, err := etcdKeyForGroupVersionKind(gvk, "default", resource, map[string]bool{"": true})
+	if err != nil {
+		t.Fatalf("etcdKeyForGroupVersionKind() error = %v", err)
+	}
+	if key != "/registry/rbac.authorization.k8s.io/clusterroles/" {
+		t.Fatalf("key = %q, want %q", key, "/registry/rbac.authorization.k8s.io/clusterroles/")
 	}
 }

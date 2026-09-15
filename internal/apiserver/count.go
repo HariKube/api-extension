@@ -127,13 +127,11 @@ func getCountHandler(authClient *authorizationclientv1.AuthorizationV1Client, ku
 					namespace = ""
 				}
 
-				prefix := "/registry/"
-				if _, ok := coreResourcesMap[gvk.Group]; !ok {
-					prefix += gvk.Group + "/"
-				}
-				prefix += gvr.Resource + "/"
-				if namespace != "" {
-					prefix += namespace + "/"
+				prefix, err := etcdKeyForGroupVersionKind(gvk, namespace, resource, coreResourcesMap)
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+
+					return
 				}
 
 				logger := countLogger.WithValues("gvk", gvk.String(), "namespace", namespace, "selector", query.Get("labelSelector"), "field-selector", fieldSelector, "prefix", prefix)
