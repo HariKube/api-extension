@@ -9,6 +9,7 @@ import (
 
 	clientv3 "go.etcd.io/etcd/client/v3"
 	authorizationv1 "k8s.io/api/authorization/v1"
+	authorizationclientv1 "k8s.io/client-go/kubernetes/typed/authorization/v1"
 )
 
 func TestQueryCreateHandlerStoresRequestInEtcd(t *testing.T) {
@@ -19,15 +20,14 @@ func TestQueryCreateHandlerStoresRequestInEtcd(t *testing.T) {
 		putQuery = originalPut
 	})
 
-	querySubjectAccessReview = func(_ context.Context, _ *authorizationv1.AuthorizationV1Client, _ *authorizationv1.ResourceAttributes, _ http.Header) (*authorizationv1.SubjectAccessReview, error) {
+	querySubjectAccessReview = func(_ context.Context, _ *authorizationclientv1.AuthorizationV1Client, _ *authorizationv1.ResourceAttributes, _ http.Header) (*authorizationv1.SubjectAccessReview, error) {
 		return &authorizationv1.SubjectAccessReview{Status: authorizationv1.SubjectAccessReviewStatus{Allowed: true}}, nil
 	}
 
 	called := false
-	var storedKey, storedValue string
-	putQuery = func(_ context.Context, _ *clientv3.Client, key, value string, _ ...clientv3.OpOption) (*clientv3.PutResponse, error) {
+	var storedValue string
+	putQuery = func(_ context.Context, _ *clientv3.Client, _, value string, _ ...clientv3.OpOption) (*clientv3.PutResponse, error) {
 		called = true
-		storedKey = key
 		storedValue = value
 		return &clientv3.PutResponse{}, nil
 	}
@@ -69,7 +69,7 @@ func TestQueryCreateHandlerReturnsForbiddenWhenUnauthorized(t *testing.T) {
 		putQuery = originalPut
 	})
 
-	querySubjectAccessReview = func(_ context.Context, _ *authorizationv1.AuthorizationV1Client, _ *authorizationv1.ResourceAttributes, _ http.Header) (*authorizationv1.SubjectAccessReview, error) {
+	querySubjectAccessReview = func(_ context.Context, _ *authorizationclientv1.AuthorizationV1Client, _ *authorizationv1.ResourceAttributes, _ http.Header) (*authorizationv1.SubjectAccessReview, error) {
 		return &authorizationv1.SubjectAccessReview{Status: authorizationv1.SubjectAccessReviewStatus{Allowed: false}}, nil
 	}
 	putQuery = func(_ context.Context, _ *clientv3.Client, _, _ string, _ ...clientv3.OpOption) (*clientv3.PutResponse, error) {
@@ -100,7 +100,7 @@ func TestQueryCreateHandlerRejectsInvalidBody(t *testing.T) {
 		putQuery = originalPut
 	})
 
-	querySubjectAccessReview = func(_ context.Context, _ *authorizationv1.AuthorizationV1Client, _ *authorizationv1.ResourceAttributes, _ http.Header) (*authorizationv1.SubjectAccessReview, error) {
+	querySubjectAccessReview = func(_ context.Context, _ *authorizationclientv1.AuthorizationV1Client, _ *authorizationv1.ResourceAttributes, _ http.Header) (*authorizationv1.SubjectAccessReview, error) {
 		return &authorizationv1.SubjectAccessReview{Status: authorizationv1.SubjectAccessReviewStatus{Allowed: true}}, nil
 	}
 	putQuery = func(_ context.Context, _ *clientv3.Client, _, _ string, _ ...clientv3.OpOption) (*clientv3.PutResponse, error) {

@@ -7,29 +7,26 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ghodss/yaml"
+	kaf "github.com/HariKube/kubernetes-aggregator-framework/pkg/framework"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.yaml.in/yaml/v2"
 	authorizationv1 "k8s.io/api/authorization/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
+	authorizationclientv1 "k8s.io/client-go/kubernetes/typed/authorization/v1"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/restmapper"
 )
 
 // stubbed package-level variables to allow tests to replace them
 var (
-	querySubjectAccessReview = func(ctx context.Context, client *authorizationv1.AuthorizationV1Client, attrs *authorizationv1.ResourceAttributes, hdr http.Header) (*authorizationv1.SubjectAccessReview, error) {
-		// default deny
-		return &authorizationv1.SubjectAccessReview{Status: authorizationv1.SubjectAccessReviewStatus{Allowed: false}}, nil
-	}
-	putQuery = func(ctx context.Context, client *clientv3.Client, key, value string, opts ...clientv3.OpOption) (*clientv3.PutResponse, error) {
-		return nil, nil
+	querySubjectAccessReview = subjectAccessReview
+	putQuery                 = func(ctx context.Context, client *clientv3.Client, key, value string, opts ...clientv3.OpOption) (*clientv3.PutResponse, error) {
+		return client.Put(ctx, key, value, opts...)
 	}
 )
 
 // getQueryHandler returns an APIKind for queries. It mirrors transaction style but is minimal.
-func getQueryHandler(authClient *authorizationv1.AuthorizationV1Client, _ *rest.Config, harikubeClient *clientv3.Client, _ []string, _ *restmapper.DeferredDiscoveryRESTMapper) (*kaf.APIKind, error) {
+func getQueryHandler(authClient *authorizationclientv1.AuthorizationV1Client, _ *rest.Config, harikubeClient *clientv3.Client, _ []string, _ *restmapper.DeferredDiscoveryRESTMapper) (*kaf.APIKind, error) {
 	return &kaf.APIKind{
 		ApiResource: metav1.APIResource{
 			Name:       "queries",
