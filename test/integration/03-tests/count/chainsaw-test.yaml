@@ -10,7 +10,7 @@ spec:
   - name: Pod test
     try:
     - script:
-        content: kubectl create configmap -n chainsaw-pod-test all-namespace --from-literal="count=$(kubectl get counts -A --field-selector=apiVersion=v1,kind=Pod -o jsonpath='{.items[0].spec.count}')"
+        content: kubectl create configmap -n chainsaw-pod-test all-namespace --from-literal="count=$(kubectl get counts -A --field-selector=apiVersion=/v1,kind=Pod -o jsonpath='{.items[0].spec.count}')"
     - assert:
         resource:
           apiVersion: v1
@@ -20,7 +20,7 @@ spec:
           metadata:
             name: all-namespace
     - script:
-        content: kubectl create configmap -n chainsaw-pod-test api-extension-system-namespace --from-literal="count=$(kubectl get counts -n api-extension-system --field-selector=apiVersion=v1,kind=Pod -o jsonpath='{.items[0].spec.count}')"
+        content: kubectl create configmap -n chainsaw-pod-test harikube-namespace --from-literal="count=$(kubectl get counts -n harikube --field-selector=apiVersion=/v1,kind=Pod -o jsonpath='{.items[0].spec.count}')"
     - assert:
         resource:
           apiVersion: v1
@@ -28,9 +28,9 @@ spec:
             count: "1"
           kind: ConfigMap
           metadata:
-            name: api-extension-system-namespace
+            name: harikube-namespace
     - script:
-        content: kubectl create configmap -n chainsaw-pod-test label-selector --from-literal="count=$(kubectl get counts -A -l control-plane=controller-manager --field-selector=apiVersion=v1,kind=Pod -o jsonpath='{.items[0].spec.count}')"
+        content: kubectl create configmap -n chainsaw-pod-test label-selector --from-literal="count=$(kubectl get counts -A -l control-plane=controller-manager --field-selector=apiVersion=/v1,kind=Pod -o jsonpath='{.items[0].spec.count}')"
     - assert:
         resource:
           apiVersion: v1
@@ -40,7 +40,7 @@ spec:
           metadata:
             name: label-selector
     - script:
-        content: kubectl create configmap -n chainsaw-pod-test field-selector --from-literal="count=$(kubectl get counts -A --field-selector=apiVersion=v1,kind=Pod,metadata.namespace=api-extension-system -o jsonpath='{.items[0].spec.count}')"
+        content: kubectl create configmap -n chainsaw-pod-test field-selector --from-literal="count=$(kubectl get counts -A --field-selector=apiVersion=/v1,kind=Pod,metadata.namespace=harikube -o jsonpath='{.items[0].spec.count}')"
     - assert:
         resource:
           apiVersion: v1

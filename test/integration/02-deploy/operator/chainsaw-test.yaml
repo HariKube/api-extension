@@ -29,7 +29,7 @@ spec:
           kind: Deployment
           metadata:
             name: api-extension-controller-manager
-            namespace: api-extension-system
+            namespace: harikube
           status:
             readyReplicas: 1
     - assert:
@@ -38,7 +38,7 @@ spec:
           kind: Endpoints
           metadata:
             name: api-extension-v1-api-extension
-            namespace: api-extension-system
+            namespace: harikube
           ~.(subsets):
             (length(addresses) > `0`): true
     - assert:
@@ -48,7 +48,7 @@ spec:
           metadata:
             name: v1.apiserver.api-extension.harikube.info
             annotations:
-              cert-manager.io/inject-ca-from: api-extension-system/api-extension-v1-api-extension-cert
+              cert-manager.io/inject-ca-from: harikube/api-extension-v1-api-extension-cert
           status:
             conditions:
             - message: all checks passed
