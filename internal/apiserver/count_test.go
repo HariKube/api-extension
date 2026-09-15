@@ -1,3 +1,4 @@
+// nolint:goconst
 package apiserver
 
 import (
@@ -20,7 +21,7 @@ import (
 )
 
 func TestCountListHandlerRejectsMissingAPIVersion(t *testing.T) {
-	handler, err := getCountHandler(nil, nil, nil, nil, nil)
+	handler, err := getCountHandler(nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error creating handler: %v", err)
 	}
@@ -41,7 +42,7 @@ func TestCountListHandlerRejectsMissingAPIVersion(t *testing.T) {
 }
 
 func TestCountListHandlerRejectsMissingKind(t *testing.T) {
-	handler, err := getCountHandler(nil, nil, nil, nil, nil)
+	handler, err := getCountHandler(nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error creating handler: %v", err)
 	}
@@ -83,7 +84,7 @@ func TestCountListHandlerReturnsForbiddenWhenUnauthorized(t *testing.T) {
 		return nil, nil
 	}
 
-	handler, err := getCountHandler(nil, nil, nil, nil, nil)
+	handler, err := getCountHandler(nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("getCountHandler() error = %v", err)
 	}
@@ -139,7 +140,7 @@ func TestCountListHandlerReturnsCountResponseList(t *testing.T) {
 		return &clientv3.GetResponse{Header: &etcdserverpb.ResponseHeader{Revision: 11}, Count: 3}, nil
 	}
 
-	handler, err := getCountHandler(nil, nil, nil, []string{""}, nil)
+	handler, err := getCountHandler(nil, nil, []string{""}, nil)
 	if err != nil {
 		t.Fatalf("getCountHandler() error = %v", err)
 	}
@@ -168,11 +169,11 @@ func TestCountListHandlerReturnsCountResponseList(t *testing.T) {
 		t.Fatalf("json.Unmarshal() error = %v", err)
 	}
 
-	if resp.TypeMeta.APIVersion != apiextv1.SchemeBuilder.GroupVersion.String() {
-		t.Fatalf("apiVersion = %q, want %q", resp.TypeMeta.APIVersion, apiextv1.SchemeBuilder.GroupVersion.String())
+	if resp.APIVersion != apiextv1.SchemeBuilder.GroupVersion.String() {
+		t.Fatalf("apiVersion = %q, want %q", resp.APIVersion, apiextv1.SchemeBuilder.GroupVersion.String())
 	}
-	if resp.TypeMeta.Kind != "CountResponseList" {
-		t.Fatalf("kind = %q, want %q", resp.TypeMeta.Kind, "CountResponseList")
+	if resp.Kind != "CountResponseList" {
+		t.Fatalf("kind = %q, want %q", resp.Kind, "CountResponseList")
 	}
 	if resp.ResourceVersion != "11" {
 		t.Fatalf("resourceVersion = %q, want %q", resp.ResourceVersion, "11")
@@ -230,7 +231,7 @@ func TestCountListHandlerClearsNamespaceForClusterScopedResources(t *testing.T) 
 		return &clientv3.GetResponse{Header: &etcdserverpb.ResponseHeader{Revision: 17}, Count: 5}, nil
 	}
 
-	handler, err := getCountHandler(nil, nil, nil, []string{""}, nil)
+	handler, err := getCountHandler(nil, nil, []string{""}, nil)
 	if err != nil {
 		t.Fatalf("getCountHandler() error = %v", err)
 	}

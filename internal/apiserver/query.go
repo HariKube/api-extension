@@ -13,12 +13,12 @@ import (
 	authorizationv1 "k8s.io/api/authorization/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	authorizationclientv1 "k8s.io/client-go/kubernetes/typed/authorization/v1"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/restmapper"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 // stubbed package-level variables to allow tests to replace them
 var (
+	queryLogger              = logf.Log.WithName("api-extension.query")
 	querySubjectAccessReview = subjectAccessReview
 	putQuery                 = func(ctx context.Context, client *clientv3.Client, key, value string, opts ...clientv3.OpOption) (*clientv3.PutResponse, error) {
 		return client.Put(ctx, key, value, opts...)
@@ -26,7 +26,7 @@ var (
 )
 
 // getQueryHandler returns an APIKind for queries. It mirrors transaction style but is minimal.
-func getQueryHandler(authClient *authorizationclientv1.AuthorizationV1Client, _ *rest.Config, harikubeClient *clientv3.Client, _ []string, _ *restmapper.DeferredDiscoveryRESTMapper) (*kaf.APIKind, error) {
+func getQueryHandler(authClient *authorizationclientv1.AuthorizationV1Client, harikubeClient *clientv3.Client) *kaf.APIKind {
 	return &kaf.APIKind{
 		ApiResource: metav1.APIResource{
 			Name:       "queries",
@@ -79,8 +79,10 @@ func getQueryHandler(authClient *authorizationclientv1.AuthorizationV1Client, _ 
 
 				// respond with a minimal object to indicate success
 				w.WriteHeader(http.StatusCreated)
-				w.Write([]byte("{}"))
+				if _, err := w.Write([]byte("{}")); err != nil {
+					queryLogger.Error(err, "Write error")
+				}
 			},
 		},
-	}, nil
+	}
 }

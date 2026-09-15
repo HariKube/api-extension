@@ -1,3 +1,4 @@
+// nolint:goconst
 package apiserver
 
 import (
@@ -65,7 +66,7 @@ spec:
 		}, nil
 	}
 
-	handler, err := getTransactionHandler(nil, nil, nil, []string{""}, nil)
+	handler, err := getTransactionHandler(nil, nil, []string{""}, nil)
 	if err != nil {
 		t.Fatalf("getTransactionHandler() error = %v", err)
 	}
@@ -182,7 +183,7 @@ spec:
 		}, nil
 	}
 
-	handler, err := getTransactionHandler(nil, nil, nil, []string{""}, nil)
+	handler, err := getTransactionHandler(nil, nil, []string{""}, nil)
 	if err != nil {
 		t.Fatalf("getTransactionHandler() error = %v", err)
 	}
@@ -240,7 +241,7 @@ func TestTransactionCreateHandlerRejectsEmptySpec(t *testing.T) {
 		return nil, nil
 	}
 
-	handler, err := getTransactionHandler(nil, nil, nil, []string{""}, nil)
+	handler, err := getTransactionHandler(nil, nil, []string{""}, nil)
 	if err != nil {
 		t.Fatalf("getTransactionHandler() error = %v", err)
 	}
@@ -282,7 +283,7 @@ func TestTransactionCreateHandlerReturnsForbiddenWhenUnauthorized(t *testing.T) 
 		return nil, nil
 	}
 
-	handler, err := getTransactionHandler(nil, nil, nil, []string{""}, nil)
+	handler, err := getTransactionHandler(nil, nil, []string{""}, nil)
 	if err != nil {
 		t.Fatalf("getTransactionHandler() error = %v", err)
 	}
@@ -323,7 +324,7 @@ func TestTransactionCreateHandlerRejectsInvalidBody(t *testing.T) {
 		return nil, nil
 	}
 
-	handler, err := getTransactionHandler(nil, nil, nil, []string{""}, nil)
+	handler, err := getTransactionHandler(nil, nil, []string{""}, nil)
 	if err != nil {
 		t.Fatalf("getTransactionHandler() error = %v", err)
 	}
@@ -403,7 +404,7 @@ spec:
 		}, nil
 	}
 
-	handler, err := getTransactionHandler(nil, nil, nil, []string{""}, nil)
+	handler, err := getTransactionHandler(nil, nil, []string{""}, nil)
 	if err != nil {
 		t.Fatalf("getTransactionHandler() error = %v", err)
 	}
@@ -472,7 +473,7 @@ spec:
 		return nil, nil
 	}
 
-	handler, err := getTransactionHandler(nil, nil, nil, []string{""}, nil)
+	handler, err := getTransactionHandler(nil, nil, []string{""}, nil)
 	if err != nil {
 		t.Fatalf("getTransactionHandler() error = %v", err)
 	}

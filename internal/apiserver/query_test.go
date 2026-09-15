@@ -32,10 +32,7 @@ func TestQueryCreateHandlerStoresRequestInEtcd(t *testing.T) {
 		return &clientv3.PutResponse{}, nil
 	}
 
-	handler, err := getQueryHandler(nil, nil, nil, nil, nil)
-	if err != nil {
-		t.Fatalf("getQueryHandler() error = %v", err)
-	}
+	handler := getQueryHandler(nil, nil)
 
 	body := `kind: Query
 metadata:
@@ -77,10 +74,7 @@ func TestQueryCreateHandlerReturnsForbiddenWhenUnauthorized(t *testing.T) {
 		return nil, nil
 	}
 
-	handler, err := getQueryHandler(nil, nil, nil, nil, nil)
-	if err != nil {
-		t.Fatalf("getQueryHandler() error = %v", err)
-	}
+	handler := getQueryHandler(nil, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/apis/apiserver.api-extension.harikube.info/namespaces/default/queries", strings.NewReader("kind: Query\nmetadata:\n  name: denied\n"))
 	rec := httptest.NewRecorder()
@@ -108,10 +102,7 @@ func TestQueryCreateHandlerRejectsInvalidBody(t *testing.T) {
 		return nil, nil
 	}
 
-	handler, err := getQueryHandler(nil, nil, nil, nil, nil)
-	if err != nil {
-		t.Fatalf("getQueryHandler() error = %v", err)
-	}
+	handler := getQueryHandler(nil, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/apis/apiserver.api-extension.harikube.info/namespaces/default/queries", strings.NewReader(": invalid"))
 	rec := httptest.NewRecorder()

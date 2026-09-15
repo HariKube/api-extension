@@ -18,7 +18,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	authorizationclientv1 "k8s.io/client-go/kubernetes/typed/authorization/v1"
-	"k8s.io/client-go/rest"
 	"k8s.io/client-go/restmapper"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -65,7 +64,7 @@ type transactionRequest struct {
 	} `json:"spec" yaml:"spec"`
 }
 
-func getTransactionHandler(authClient *authorizationclientv1.AuthorizationV1Client, _ *rest.Config, harikubeClient *clientv3.Client, coreResources []string, mapper *restmapper.DeferredDiscoveryRESTMapper) (*kaf.APIKind, error) {
+func getTransactionHandler(authClient *authorizationclientv1.AuthorizationV1Client, harikubeClient *clientv3.Client, coreResources []string, mapper *restmapper.DeferredDiscoveryRESTMapper) (*kaf.APIKind, error) {
 	coreResourcesMap := map[string]bool{}
 	for i := range coreResources {
 		coreResourcesMap[coreResources[i]] = true
@@ -211,7 +210,7 @@ func getTransactionHandler(authClient *authorizationclientv1.AuthorizationV1Clie
 				}
 
 				if err := writeResponse(w, http.StatusCreated, container, contentType); err != nil {
-					logger.Info("Write error", "error", err)
+					logger.Error(err, "Write error")
 
 					return
 				}

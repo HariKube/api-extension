@@ -15,27 +15,27 @@ import (
 
 func TestResponseContentUsesContentTypeHeader(t *testing.T) {
 	headers := http.Header{}
-	headers.Set("Content-Type", "application/yaml;as=Table;v=v1;g=meta.k8s.io")
-	headers.Set("Accept", "application/json")
+	headers.Set("Content-Type", contentTypeYAML+";"+contentDetailsTableV1)
+	headers.Set("Accept", contentTypeJSON)
 
 	contentType, contentDetails := responseContent(headers)
 
-	if contentType != "application/yaml" {
-		t.Fatalf("contentType = %q, want %q", contentType, "application/yaml")
+	if contentType != contentTypeYAML {
+		t.Fatalf("contentType = %q, want %q", contentType, contentTypeYAML)
 	}
-	if contentDetails != "as=Table;v=v1;g=meta.k8s.io" {
-		t.Fatalf("contentDetails = %q, want %q", contentDetails, "as=Table;v=v1;g=meta.k8s.io")
+	if contentDetails != contentDetailsTableV1 {
+		t.Fatalf("contentDetails = %q, want %q", contentDetails, contentDetailsTableV1)
 	}
 }
 
 func TestResponseContentFallsBackToAcceptHeader(t *testing.T) {
 	headers := http.Header{}
-	headers["Accept"] = []string{"application/json", "application/yaml"}
+	headers["Accept"] = []string{contentTypeJSON, contentTypeYAML}
 
 	contentType, contentDetails := responseContent(headers)
 
-	if contentType != "application/json" {
-		t.Fatalf("contentType = %q, want %q", contentType, "application/json")
+	if contentType != contentTypeJSON {
+		t.Fatalf("contentType = %q, want %q", contentType, contentTypeJSON)
 	}
 	if contentDetails != "" {
 		t.Fatalf("contentDetails = %q, want empty", contentDetails)
@@ -46,15 +46,15 @@ func TestWriteResponseWritesYAML(t *testing.T) {
 	rec := httptest.NewRecorder()
 	container := map[string]string{"kind": "TransactionResponse", "name": "example"}
 
-	if err := writeResponse(rec, http.StatusCreated, container, "application/yaml"); err != nil {
+	if err := writeResponse(rec, http.StatusCreated, container, contentTypeYAML); err != nil {
 		t.Fatalf("writeResponse() error = %v", err)
 	}
 
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusCreated)
 	}
-	if got := rec.Header().Get("Content-Type"); got != "application/yaml" {
-		t.Fatalf("content type = %q, want %q", got, "application/yaml")
+	if got := rec.Header().Get("Content-Type"); got != contentTypeYAML {
+		t.Fatalf("content type = %q, want %q", got, contentTypeYAML)
 	}
 
 	var got map[string]string
@@ -62,6 +62,30 @@ func TestWriteResponseWritesYAML(t *testing.T) {
 		t.Fatalf("yaml.Unmarshal() error = %v", err)
 	}
 	if got["kind"] != container["kind"] || got["name"] != container["name"] {
+		t.Fatalf("body = %#v, want %#v", got, container)
+	}
+}
+
+func TestWriteResponseWritesJSON(t *testing.T) {
+	rec := httptest.NewRecorder()
+	container := map[string]string{"kind": "CountResponse"}
+
+	if err := writeResponse(rec, http.StatusOK, container, contentTypeJSON); err != nil {
+		t.Fatalf("writeResponse() error = %v", err)
+	}
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if got := rec.Header().Get("Content-Type"); got != contentTypeJSON {
+		t.Fatalf("content type = %q, want %q", got, contentTypeJSON)
+	}
+
+	var got map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if got["kind"] != container["kind"] {
 		t.Fatalf("body = %#v, want %#v", got, container)
 	}
 }
@@ -77,8 +101,8 @@ func TestWriteResponseDefaultsToJSON(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusOK)
 	}
-	if got := rec.Header().Get("Content-Type"); got != "application/json" {
-		t.Fatalf("content type = %q, want %q", got, "application/json")
+	if got := rec.Header().Get("Content-Type"); got != contentTypeJSON {
+		t.Fatalf("content type = %q, want %q", got, contentTypeJSON)
 	}
 
 	var got map[string]string
@@ -95,7 +119,7 @@ func TestTableResponseBuildsV1Table(t *testing.T) {
 	cells := []interface{}{"example"}
 	obj := &metav1.Status{Status: "Success"}
 
-	container, ok, err := tableResponse("as=Table;v=v1;g=meta.k8s.io", "7", columns, cells, obj)
+	container, ok, err := tableResponse(contentDetailsTableV1, "7", columns, cells, obj)
 	if err != nil {
 		t.Fatalf("tableResponse() error = %v", err)
 	}
@@ -123,7 +147,7 @@ func TestTableResponseBuildsV1Beta1Table(t *testing.T) {
 	cells := []interface{}{"example"}
 	obj := &metav1.Status{Status: "Success"}
 
-	container, ok, err := tableResponse("as=Table;v=v1beta1;g=meta.k8s.io", "9", columns, cells, obj)
+	container, ok, err := tableResponse(contentDetailsTableV1Beta1, "9", columns, cells, obj)
 	if err != nil {
 		t.Fatalf("tableResponse() error = %v", err)
 	}

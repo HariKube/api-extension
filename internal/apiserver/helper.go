@@ -19,6 +19,13 @@ import (
 	"k8s.io/client-go/restmapper"
 )
 
+const (
+	contentDetailsTableV1      = "as=Table;v=v1;g=meta.k8s.io"
+	contentDetailsTableV1Beta1 = "as=Table;v=v1beta1;g=meta.k8s.io"
+	contentTypeJSON            = "application/json"
+	contentTypeYAML            = "application/yaml"
+)
+
 var (
 	pluralize = goplural.NewClient()
 )
@@ -75,7 +82,7 @@ func responseContent(headers http.Header) (contentType, contentDetails string) {
 }
 
 func tableResponse(contentDetails, resourceVersion string, columns []metav1.TableColumnDefinition, cells []interface{}, object runtime.Object) (any, bool, error) {
-	if contentDetails != "as=Table;v=v1;g=meta.k8s.io" && contentDetails != "as=Table;v=v1beta1;g=meta.k8s.io" {
+	if contentDetails != contentDetailsTableV1 && contentDetails != contentDetailsTableV1Beta1 {
 		return nil, false, nil
 	}
 
@@ -93,7 +100,7 @@ func tableResponse(contentDetails, resourceVersion string, columns []metav1.Tabl
 	}
 
 	switch contentDetails {
-	case "as=Table;v=v1;g=meta.k8s.io":
+	case contentDetailsTableV1:
 		return metav1.Table{
 			TypeMeta: metav1.TypeMeta{
 				APIVersion: "meta.k8s.io/v1",
@@ -105,7 +112,7 @@ func tableResponse(contentDetails, resourceVersion string, columns []metav1.Tabl
 			ColumnDefinitions: columns,
 			Rows:              []metav1.TableRow{row},
 		}, true, nil
-	case "as=Table;v=v1beta1;g=meta.k8s.io":
+	case contentDetailsTableV1Beta1:
 		return metav1beta1.Table{
 			TypeMeta: metav1.TypeMeta{
 				APIVersion: "meta.k8s.io/v1beta1",
@@ -129,20 +136,20 @@ func writeResponse(w http.ResponseWriter, statusCode int, container any, content
 	)
 
 	switch contentType {
-	case "application/yaml", "application/x-yaml", "text/yaml", "text/x-yaml":
+	case contentTypeYAML, "application/x-yaml", "text/yaml", "text/x-yaml":
 		if containerRaw, err = yaml.Marshal(&container); err != nil {
 			return err
 		}
 
-		w.Header().Set("Content-Type", "application/yaml")
-	case "application/json":
+		w.Header().Set("Content-Type", contentTypeYAML)
+	case contentTypeJSON:
 		fallthrough
 	default:
 		if containerRaw, err = json.Marshal(&container); err != nil {
 			return err
 		}
 
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Type", contentTypeJSON)
 	}
 
 	w.WriteHeader(statusCode)
