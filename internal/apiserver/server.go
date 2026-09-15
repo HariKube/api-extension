@@ -3,6 +3,8 @@ package apiserver
 import (
 	"context"
 	"crypto/tls"
+	"errors"
+	"strings"
 	"time"
 
 	kaf "github.com/HariKube/kubernetes-aggregator-framework/pkg/framework"
@@ -54,7 +56,7 @@ type searchAPIServer struct {
 }
 
 func (s *searchAPIServer) Start(ctx context.Context) (err error) {
-	tlsConfig, err := s.clientConfig()
+	tlsConfig, err := s.clientConfig(s.harikubeUrls)
 	if err != nil {
 		return err
 	}
@@ -114,8 +116,14 @@ func (s *searchAPIServer) Start(ctx context.Context) (err error) {
 	return s.Server.Start(ctx)
 }
 
-func (s *searchAPIServer) clientConfig() (*tls.Config, error) {
-	if s.harikubeCertFile == "" && s.harikubeKeyFile == "" && s.harikubeCAFile == "" {
+func (s *searchAPIServer) clientConfig(urls []string) (*tls.Config, error) {
+	if s.harikubeCertFile == "" || s.harikubeKeyFile == "" || s.harikubeCAFile == "" {
+		for i := range urls {
+			if strings.HasPrefix(urls[i], "https://") {
+				return nil, errors.New("missing harikube TLS config")
+			}
+		}
+
 		return nil, nil
 	}
 

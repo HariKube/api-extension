@@ -80,7 +80,7 @@ func getQueryHandler(authClient *authorizationclientv1.AuthorizationV1Client, ha
 				// respond with a minimal object to indicate success
 				w.WriteHeader(http.StatusCreated)
 				if _, err := w.Write([]byte("{}")); err != nil {
-					queryLogger.Error(err, "Write error")
+					queryLogger.Info("Write error", "error", err)
 				}
 			},
 		},

@@ -1,5 +1,5 @@
 # Adds namespace to all resources.
-namespace: api-extension-system
+namespace: harikube
 
 # Value of this field is prepended to the
 # names of all resources, e.g. a deployment named
@@ -19,6 +19,3 @@ secretGenerator:
 - name: harikube-connection
   files:
   - harikube.url
-  - harikube.crt
-  - harikube.key
-  - harikube.ca

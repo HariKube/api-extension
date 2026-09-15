@@ -211,7 +211,7 @@ func getCountHandler(authClient *authorizationclientv1.AuthorizationV1Client, ha
 				}
 
 				if err := writeResponse(w, http.StatusOK, container, contentType); err != nil {
-					logger.Error(err, "Write error")
+					logger.Info("Write error", "error", err)
 
 					return
 				}

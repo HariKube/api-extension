@@ -210,7 +210,7 @@ func getTransactionHandler(authClient *authorizationclientv1.AuthorizationV1Clie
 				}
 
 				if err := writeResponse(w, http.StatusCreated, container, contentType); err != nil {
-					logger.Error(err, "Write error")
+					logger.Info("Write error", "error", err)
 
 					return
 				}

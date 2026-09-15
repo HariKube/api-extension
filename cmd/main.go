@@ -116,6 +116,9 @@ func main() {
 		if info, err := os.Stat(harikubeCertFile); err != nil && !os.IsNotExist(err) {
 			setupLog.Error(err, "unable to read file", "path", harikubeCertFile)
 			os.Exit(1)
+		} else if info == nil {
+			setupLog.Error(err, "unable to read info", "path", harikubeCertFile)
+			os.Exit(1)
 		} else if info.Size() == 0 {
 			harikubeCertFile = ""
 		}
@@ -125,6 +128,9 @@ func main() {
 		if info, err := os.Stat(filepath.Clean(harikubeKeyFile)); err != nil && !os.IsNotExist(err) {
 			setupLog.Error(err, "unable to read file", "path", harikubeKeyFile)
 			os.Exit(1)
+		} else if info == nil {
+			setupLog.Error(err, "unable to read info", "path", harikubeKeyFile)
+			os.Exit(1)
 		} else if info.Size() == 0 {
 			harikubeKeyFile = ""
 		}
@@ -133,6 +139,9 @@ func main() {
 	if harikubeCAFile != "" {
 		if info, err := os.Stat(filepath.Clean(harikubeCAFile)); err != nil && !os.IsNotExist(err) {
 			setupLog.Error(err, "unable to read file", "path", harikubeCAFile)
+			os.Exit(1)
+		} else if info == nil {
+			setupLog.Error(err, "unable to read info", "path", harikubeCAFile)
 			os.Exit(1)
 		} else if info.Size() == 0 {
 			harikubeCAFile = ""

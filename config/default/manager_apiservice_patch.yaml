@@ -29,15 +29,15 @@
 
 - op: add
   path: /spec/template/spec/containers/0/args/-
-  value: --harikube-cert-file=/tmp/harikube-connection/harikube.crt
+  value: --harikube-cert-file=/tmp/harikube-middleware-crt/tls.crt
 
 - op: add
   path: /spec/template/spec/containers/0/args/-
-  value: --harikube-key-file=/tmp/harikube-connection/harikube.key
+  value: --harikube-key-file=/tmp/harikube-middleware-crt/tls.key
 
 - op: add
   path: /spec/template/spec/containers/0/args/-
-  value: --harikube-ca-file=/tmp/harikube-connection/harikube.ca
+  value: --harikube-ca-file=/tmp/harikube-middleware-crt/ca.crt
 
 - op: add
   path: /spec/template/spec/containers/0/ports/-
@@ -61,6 +61,13 @@
     readOnly: true
 
 - op: add
+  path: /spec/template/spec/containers/0/volumeMounts/-
+  value:
+    mountPath: /tmp/harikube-middleware-crt
+    name: harikube-middleware-crt
+    readOnly: true
+
+- op: add
   path: /spec/template/spec/volumes/-
   value:
     name: apiserver-certs
@@ -73,3 +80,10 @@
     name: harikube-connection
     secret:
       secretName: api-extension-harikube-connection
+
+- op: add
+  path: /spec/template/spec/volumes/-
+  value:
+    name: harikube-middleware-crt
+    secret:
+      secretName: harikube-middleware-crt
