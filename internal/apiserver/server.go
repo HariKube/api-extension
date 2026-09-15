@@ -99,10 +99,10 @@ func (s *searchAPIServer) Start(ctx context.Context) (err error) {
 		return err
 	}
 
-	// transactionHandler, err := getTransactionHandler(authClient, s.kubeConfig, harikubeClient, s.coreResources, mapper)
-	// if err != nil {
-	// 	return err
-	// }
+	transactionHandler, err := getTransactionHandler(authClient, s.kubeConfig, harikubeClient, s.coreResources, mapper)
+	if err != nil {
+		return err
+	}
 
 	s.Server = *kaf.NewServer(kaf.ServerConfig{
 		Port:     s.port,
@@ -112,7 +112,7 @@ func (s *searchAPIServer) Start(ctx context.Context) (err error) {
 		Version:  Version,
 		APIKinds: []kaf.APIKind{
 			*countHandler,
-			// *transactionHandler,
+			*transactionHandler,
 		},
 	})
 

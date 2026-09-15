@@ -2,7 +2,6 @@ package apiserver
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -11,12 +10,9 @@ import (
 	kaf "github.com/HariKube/kubernetes-aggregator-framework/pkg/framework"
 	apiextv1 "github.com/harikube/api-extension/api/v1"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"go.yaml.in/yaml/v2"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	metav1beta1 "k8s.io/apimachinery/pkg/apis/meta/v1beta1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	authorizationclientv1 "k8s.io/client-go/kubernetes/typed/authorization/v1"
 	"k8s.io/client-go/rest"
@@ -176,93 +172,28 @@ func getCountHandler(authClient *authorizationclientv1.AuthorizationV1Client, ku
 					},
 				}
 
-				accept := r.Header.Get("Content-Type")
-				if accept == "" {
-					accept = strings.Split(strings.Join(r.Header.Values("Accept"), ","), ",")[0]
+				contentType, contentDetails := responseContent(r.Header)
+
+				columns := []metav1.TableColumnDefinition{
+					{
+						Name:   "Name",
+						Type:   "string",
+						Format: "name",
+					},
+					{
+						Name: "Count",
+						Type: "integer",
+					},
 				}
-				contentType, contentDetails, _ := strings.Cut(accept, ";")
+				cells := []interface{}{kind, countResp.Count}
 
-				var container any
-				switch contentDetails {
-				case "as=Table;v=v1;g=meta.k8s.io":
-					respRaw, err := json.Marshal(&resp)
-					if err != nil {
-						http.Error(w, err.Error(), http.StatusInternalServerError)
+				container, ok, err := tableResponse(contentDetails, resp.ResourceVersion, columns, cells, &resp)
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
 
-						return
-					}
-
-					container = metav1.Table{
-						TypeMeta: metav1.TypeMeta{
-							APIVersion: "meta.k8s.io/v1",
-							Kind:       "Table",
-						},
-						ListMeta: metav1.ListMeta{
-							ResourceVersion: resp.ResourceVersion,
-						},
-						ColumnDefinitions: []metav1.TableColumnDefinition{
-							{
-								Name:   "Name",
-								Type:   "string",
-								Format: "name",
-							},
-							{
-								Name: "Count",
-								Type: "integer",
-							},
-						},
-						Rows: []metav1.TableRow{
-							{
-								Cells: []interface{}{
-									kind, countResp.Count,
-								},
-								Object: runtime.RawExtension{
-									Object: &resp,
-									Raw:    respRaw,
-								},
-							},
-						},
-					}
-				case "as=Table;v=v1beta1;g=meta.k8s.io":
-					respRaw, err := json.Marshal(&resp)
-					if err != nil {
-						http.Error(w, err.Error(), http.StatusInternalServerError)
-
-						return
-					}
-
-					container = metav1beta1.Table{
-						TypeMeta: metav1.TypeMeta{
-							APIVersion: "meta.k8s.io/v1beta1",
-							Kind:       "Table",
-						},
-						ListMeta: metav1.ListMeta{
-							ResourceVersion: resp.ResourceVersion,
-						},
-						ColumnDefinitions: []metav1.TableColumnDefinition{
-							{
-								Name:   "Name",
-								Type:   "string",
-								Format: "name",
-							},
-							{
-								Name: "Count",
-								Type: "integer",
-							},
-						},
-						Rows: []metav1.TableRow{
-							{
-								Cells: []interface{}{
-									kind, countResp.Count,
-								},
-								Object: runtime.RawExtension{
-									Object: &resp,
-									Raw:    respRaw,
-								},
-							},
-						},
-					}
-				default:
+					return
+				}
+				if !ok {
 					container = apiextv1.CountResponseList{
 						TypeMeta: metav1.TypeMeta{
 							APIVersion: apiextv1.SchemeBuilder.GroupVersion.String(),
@@ -275,30 +206,7 @@ func getCountHandler(authClient *authorizationclientv1.AuthorizationV1Client, ku
 					}
 				}
 
-				var containerRaw []byte
-				switch contentType {
-				case "application/yaml", "application/x-yaml", "text/yaml", "text/x-yaml":
-					if containerRaw, err = yaml.Marshal(&container); err != nil {
-						http.Error(w, err.Error(), http.StatusInternalServerError)
-
-						return
-					}
-
-					w.Header().Set("Content-Type", "application/yaml")
-				case "application/json":
-					fallthrough
-				default:
-					if containerRaw, err = json.Marshal(&container); err != nil {
-						http.Error(w, err.Error(), http.StatusInternalServerError)
-
-						return
-					}
-
-					w.Header().Set("Content-Type", "application/json")
-				}
-
-				w.WriteHeader(http.StatusOK)
-				if _, err := w.Write(containerRaw); err != nil {
+				if err := writeResponse(w, http.StatusOK, container, contentType); err != nil {
 					logger.Info("Write error", "error", err)
 
 					return

@@ -2,12 +2,17 @@ package apiserver
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
+	"strings"
 
 	goplural "github.com/gertd/go-pluralize"
+	"go.yaml.in/yaml/v2"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	metav1beta1 "k8s.io/apimachinery/pkg/apis/meta/v1beta1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	authorizationclientv1 "k8s.io/client-go/kubernetes/typed/authorization/v1"
 	"k8s.io/client-go/restmapper"
@@ -16,10 +21,6 @@ import (
 var (
 	pluralize = goplural.NewClient()
 )
-
-func pluraliza() *goplural.Client {
-	return pluralize
-}
 
 func subjectAccessReview(ctx context.Context, authClient *authorizationclientv1.AuthorizationV1Client, resourceAttributes *authorizationv1.ResourceAttributes, headers http.Header) (*authorizationv1.SubjectAccessReview, error) {
 	sar := authorizationv1.SubjectAccessReview{
@@ -42,4 +43,94 @@ func getResurce(gvk schema.GroupVersionKind, mapper *restmapper.DeferredDiscover
 	}
 
 	return m, nil
+}
+
+func responseContent(headers http.Header) (contentType, contentDetails string) {
+	accept := headers.Get("Content-Type")
+	if accept == "" {
+		accept = strings.Split(strings.Join(headers.Values("Accept"), ","), ",")[0]
+	}
+
+	contentType, contentDetails, _ = strings.Cut(accept, ";")
+
+	return contentType, contentDetails
+}
+
+func tableResponse(contentDetails, resourceVersion string, columns []metav1.TableColumnDefinition, cells []interface{}, object runtime.Object) (any, bool, error) {
+	if contentDetails != "as=Table;v=v1;g=meta.k8s.io" && contentDetails != "as=Table;v=v1beta1;g=meta.k8s.io" {
+		return nil, false, nil
+	}
+
+	objectRaw, err := json.Marshal(object)
+	if err != nil {
+		return nil, false, err
+	}
+
+	row := metav1.TableRow{
+		Cells: cells,
+		Object: runtime.RawExtension{
+			Object: object,
+			Raw:    objectRaw,
+		},
+	}
+
+	switch contentDetails {
+	case "as=Table;v=v1;g=meta.k8s.io":
+		return metav1.Table{
+			TypeMeta: metav1.TypeMeta{
+				APIVersion: "meta.k8s.io/v1",
+				Kind:       "Table",
+			},
+			ListMeta: metav1.ListMeta{
+				ResourceVersion: resourceVersion,
+			},
+			ColumnDefinitions: columns,
+			Rows:              []metav1.TableRow{row},
+		}, true, nil
+	case "as=Table;v=v1beta1;g=meta.k8s.io":
+		return metav1beta1.Table{
+			TypeMeta: metav1.TypeMeta{
+				APIVersion: "meta.k8s.io/v1beta1",
+				Kind:       "Table",
+			},
+			ListMeta: metav1.ListMeta{
+				ResourceVersion: resourceVersion,
+			},
+			ColumnDefinitions: columns,
+			Rows:              []metav1.TableRow{row},
+		}, true, nil
+	default:
+		return nil, false, nil
+	}
+}
+
+func writeResponse(w http.ResponseWriter, statusCode int, container any, contentType string) error {
+	var (
+		containerRaw []byte
+		err          error
+	)
+
+	switch contentType {
+	case "application/yaml", "application/x-yaml", "text/yaml", "text/x-yaml":
+		if containerRaw, err = yaml.Marshal(&container); err != nil {
+			return err
+		}
+
+		w.Header().Set("Content-Type", "application/yaml")
+	case "application/json":
+		fallthrough
+	default:
+		if containerRaw, err = json.Marshal(&container); err != nil {
+			return err
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+	}
+
+	w.WriteHeader(statusCode)
+	if _, err := w.Write(containerRaw); err != nil {
+		return err
+	}
+
+	return nil
 }
