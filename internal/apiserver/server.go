@@ -11,7 +11,11 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc"
+	"k8s.io/client-go/discovery"
+	"k8s.io/client-go/discovery/cached/memory"
+	authclientv1 "k8s.io/client-go/kubernetes/typed/authorization/v1"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/restmapper"
 )
 
 const (
@@ -55,6 +59,11 @@ func (s *searchAPIServer) Start(ctx context.Context) (err error) {
 		return err
 	}
 
+	authClient, err := authclientv1.NewForConfig(s.kubeConfig)
+	if err != nil {
+		return err
+	}
+
 	harikubeClient, err := clientv3.New(clientv3.Config{
 		Endpoints:            s.harikubeUrls,
 		TLS:                  tlsConfig,
@@ -78,10 +87,22 @@ func (s *searchAPIServer) Start(ctx context.Context) (err error) {
 		return err
 	}
 
-	countHandler, err := getCountHandler(s.kubeConfig, harikubeClient, s.coreResources)
+	discoveryKubeClient, err := discovery.NewDiscoveryClientForConfig(s.kubeConfig)
 	if err != nil {
 		return err
 	}
+
+	mapper := restmapper.NewDeferredDiscoveryRESTMapper(memory.NewMemCacheClient(discoveryKubeClient))
+
+	countHandler, err := getCountHandler(authClient, s.kubeConfig, harikubeClient, s.coreResources, mapper)
+	if err != nil {
+		return err
+	}
+
+	// transactionHandler, err := getTransactionHandler(authClient, s.kubeConfig, harikubeClient, s.coreResources, mapper)
+	// if err != nil {
+	// 	return err
+	// }
 
 	s.Server = *kaf.NewServer(kaf.ServerConfig{
 		Port:     s.port,
@@ -91,6 +112,7 @@ func (s *searchAPIServer) Start(ctx context.Context) (err error) {
 		Version:  Version,
 		APIKinds: []kaf.APIKind{
 			*countHandler,
+			// *transactionHandler,
 		},
 	})
 
