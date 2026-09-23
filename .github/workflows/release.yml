@@ -46,6 +46,8 @@ jobs:
       env:
         IMG: ${{ vars.REGISTRY }}/${{ vars.REPOSITORY }}/api-extension:${{ steps.extract_branch.outputs.branch }}
         TAG: ${{ steps.extract_branch.outputs.branch }}
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@v4
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
     - name: Build and push (forks)
@@ -56,6 +58,7 @@ jobs:
         push: true
         tags: |
           ${{ vars.REGISTRY }}/${{ vars.REPOSITORY }}/api-extension:${{ steps.extract_branch.outputs.branch }}
+          ${{ vars.REGISTRY }}/${{ vars.REPOSITORY }}/api-extension:latest
     - name: Create release
       if: ${{ !startsWith(github.ref, 'refs/heads/dev-') }}
       uses: mhmxs/milestone-release-action@main
