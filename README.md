@@ -8,6 +8,8 @@ This repository contains a Kubernetes API extension to implement advanced data m
 
 ### Count
 
+> HariKube - OpenSource: release-0.15.0 Enterprise: release-0.15.0
+
 ```bash
 # Cluster scope resource
 kubectl get counts --field-selector=apiVersion=cert-manager.io,kind=ClusterIssuer
@@ -35,6 +37,8 @@ kubectl get --raw "/apis/apiserver.api-extension.harikube.info/v1/namespaces/def
 ```
 
 ### Transaction
+
+> HariKube - OpenSource: dev-v0.16.4-0 Enterprise: -
 
 ```bash
 cat <<EOF | kubectl create --raw "/apis/apiserver.api-extension.harikube.info/namespaces/default/transactionrequests" -f -

@@ -3,6 +3,8 @@
 # It should be run by config/default
 resources:
 - bases/api-extension.harikube.info_countresponses.yaml
+- bases/api-extension.harikube.info_transactionrequests.yaml
+- bases/api-extension.harikube.info_transactionresponses.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:
