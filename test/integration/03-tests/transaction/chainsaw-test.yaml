@@ -1,0 +1,109 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: transaction
+spec:
+  namespace: chainsaw-transaction-test
+  timeouts:
+    assert: 1m
+    exec: 1m
+  steps:
+  - name: Submit a transaction request
+    try:
+    - apply:
+        resource:
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: wallet-alice
+            namespace: chainsaw-transaction-test
+            labels:
+              stage: pending
+          data:
+            balance: "10"
+            state: open
+    - apply:
+        resource:
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: wallet-bob
+            namespace: chainsaw-transaction-test
+            labels:
+              stage: pending
+          data:
+            balance: "20"
+            state: open
+    - apply:
+        resource:
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: wallet-carol
+            namespace: chainsaw-transaction-test
+            labels:
+              stage: pending
+          data:
+            balance: "30"
+            state: open
+    - script:
+        content: |
+          alice_rv=$(kubectl get configmap wallet-alice -n chainsaw-transaction-test -o jsonpath='{.metadata.resourceVersion}')
+          bob_rv=$(kubectl get configmap wallet-bob -n chainsaw-transaction-test -o jsonpath='{.metadata.resourceVersion}')
+          carol_rv=$(kubectl get configmap wallet-carol -n chainsaw-transaction-test -o jsonpath='{.metadata.resourceVersion}')
+          txn_name="update-wallets-$(date +%s)"
+
+          response=$(cat <<EOF | kubectl create --raw "/apis/apiserver.api-extension.harikube.info/v1/namespaces/chainsaw-transaction-test/transactionrequests" -f -
+          apiVersion: apiserver.api-extension.harikube.info/v1
+          kind: TransactionRequest
+          metadata:
+            name: ${txn_name}
+            namespace: chainsaw-transaction-test
+          spec:
+            update:
+            - apiVersion: v1
+              kind: ConfigMap
+              metadata:
+                name: wallet-alice
+                namespace: chainsaw-transaction-test
+                resourceVersion: "${alice_rv}"
+                labels:
+                  stage: committed
+              data:
+                balance: "15"
+                state: settled
+            - apiVersion: v1
+              kind: ConfigMap
+              metadata:
+                name: wallet-bob
+                namespace: chainsaw-transaction-test
+                resourceVersion: "${bob_rv}"
+                labels:
+                  stage: committed
+              data:
+                balance: "25"
+                state: settled
+            - apiVersion: v1
+              kind: ConfigMap
+              metadata:
+                name: wallet-carol
+                namespace: chainsaw-transaction-test
+                resourceVersion: "${carol_rv}"
+                labels:
+                  stage: committed
+              data:
+                balance: "35"
+                state: settled
+          EOF
+          )
+
+          TXN_NAME="$txn_name" RESPONSE="$response" python - <<'PY'
+          import json
+          import os
+
+          response = json.loads(os.environ["RESPONSE"])
+          assert response["kind"] == "TransactionResponse", response
+          assert response["metadata"]["name"] == os.environ["TXN_NAME"], response
+          assert response["metadata"]["namespace"] == "chainsaw-transaction-test", response
+          assert response["metadata"]["resourceVersion"], response
+          PY

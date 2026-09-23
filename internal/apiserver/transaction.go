@@ -2,10 +2,10 @@ package apiserver
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"sort"
 	"strings"
 	"time"
 
@@ -16,7 +16,10 @@ import (
 	authorizationv1 "k8s.io/api/authorization/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured/unstructuredscheme"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	kjson "k8s.io/apimachinery/pkg/runtime/serializer/json"
 	authorizationclientv1 "k8s.io/client-go/kubernetes/typed/authorization/v1"
 	"k8s.io/client-go/restmapper"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -26,42 +29,123 @@ var (
 	transactionLogger              = logf.Log.WithName("api-extension.transaction")
 	transactionSubjectAccessReview = subjectAccessReview
 	transactionGetResource         = getResurce
-	transactionCommit              = func(ctx context.Context, client *clientv3.Client, resources map[string][]byte) (*clientv3.TxnResponse, error) {
-		keys := make([]string, 0, len(resources))
-		for k := range resources {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-
-		ops := make([]clientv3.Op, 0, len(keys))
-		for _, k := range keys {
-			etcdKey, operation, _ := strings.Cut(k, "#")
-			switch operation {
-			case "create", "update":
-				ops = append(ops, clientv3.OpPut(etcdKey, string(resources[k])))
-			case "delete":
-				ops = append(ops, clientv3.OpDelete(etcdKey))
-			default:
-				return nil, fmt.Errorf("unknown operation %q", operation)
-			}
+	transactionCommit              = func(ctx context.Context, client *clientv3.Client, namespace, name string, resources map[string][]byte) (*clientv3.TxnResponse, error) {
+		payloadBytes, err := buildTransactionCommitPayload(namespace, name, resources)
+		if err != nil {
+			return nil, err
 		}
 
-		return client.Txn(ctx).Then(ops...).Commit()
+		txnKey := transactionStorageKey(namespace, name)
+
+		return client.Txn(ctx).
+			If(clientv3.Compare(clientv3.ModRevision(txnKey), "=", 0)).
+			Then(clientv3.OpPut(txnKey, string(payloadBytes))).
+			Else(clientv3.OpGet(txnKey)).
+			Commit()
 	}
+
+	unstructuredDecoder = kjson.NewSerializerWithOptions(
+		kjson.DefaultMetaFactory,
+		unstructuredscheme.NewUnstructuredCreator(),
+		unstructuredscheme.NewUnstructuredObjectTyper(),
+		kjson.SerializerOptions{Yaml: true, Pretty: false, Strict: false},
+	)
 )
 
 type transactionRequest struct {
-	APIVersion string `json:"apiVersion" yaml:"apiVersion"`
-	Kind       string `json:"kind" yaml:"kind"`
-	Metadata   struct {
-		Name      string `json:"name" yaml:"name"`
-		Namespace string `json:"namespace" yaml:"namespace"`
-	} `json:"metadata" yaml:"metadata"`
-	Spec struct {
-		Create []map[string]interface{} `json:"create" yaml:"create"`
-		Update []map[string]interface{} `json:"update" yaml:"update"`
-		Delete []map[string]interface{} `json:"delete" yaml:"delete"`
-	} `json:"spec" yaml:"spec"`
+	Name      string
+	Namespace string
+	Create    [][]byte
+	Update    [][]byte
+	Delete    [][]byte
+}
+
+func buildTransactionCommitPayload(namespace, name string, resources map[string][]byte) ([]byte, error) {
+	spec := map[string]interface{}{
+		"resources": resources,
+	}
+
+	return json.Marshal(map[string]interface{}{
+		"apiVersion": apiextv1.SchemeBuilder.GroupVersion.String(),
+		"kind":       "Transaction",
+		"metadata": map[string]interface{}{
+			"name":      name,
+			"namespace": namespace,
+		},
+		"spec":  spec,
+		"specs": spec,
+	})
+}
+
+func decodeTransactionRequest(body []byte) (*transactionRequest, error) {
+	var payload struct {
+		Metadata map[string]interface{} `yaml:"metadata"`
+		Spec     struct {
+			Create []map[string]interface{} `yaml:"create"`
+			Update []map[string]interface{} `yaml:"update"`
+			Delete []map[string]interface{} `yaml:"delete"`
+		} `yaml:"spec"`
+	}
+
+	if err := yaml.Unmarshal(body, &payload); err != nil {
+		return nil, err
+	}
+
+	marshalEntries := func(entries []map[string]interface{}) ([][]byte, error) {
+		result := make([][]byte, 0, len(entries))
+		for i := range entries {
+			entryBytes, err := yaml.Marshal(entries[i])
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, entryBytes)
+		}
+		return result, nil
+	}
+
+	create, err := marshalEntries(payload.Spec.Create)
+	if err != nil {
+		return nil, fmt.Errorf("marshal create resources: %w", err)
+	}
+	update, err := marshalEntries(payload.Spec.Update)
+	if err != nil {
+		return nil, fmt.Errorf("marshal update resources: %w", err)
+	}
+	deleteResources, err := marshalEntries(payload.Spec.Delete)
+	if err != nil {
+		return nil, fmt.Errorf("marshal delete resources: %w", err)
+	}
+
+	request := &transactionRequest{
+		Create: create,
+		Update: update,
+		Delete: deleteResources,
+	}
+	if payload.Metadata != nil {
+		if name, ok := payload.Metadata["name"].(string); ok {
+			request.Name = name
+		}
+		if namespace, ok := payload.Metadata["namespace"].(string); ok {
+			request.Namespace = namespace
+		}
+	}
+
+	return request, nil
+}
+
+func transactionRequestNamespace(path string) string {
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	for i := 0; i < len(parts)-1; i++ {
+		if parts[i] == "namespaces" && parts[i+1] != "" {
+			return parts[i+1]
+		}
+	}
+
+	return ""
+}
+
+func transactionStorageKey(namespace, name string) string {
+	return fmt.Sprintf("/harikube/transaction/%s/%s", namespace, name)
 }
 
 func getTransactionHandler(authClient *authorizationclientv1.AuthorizationV1Client, harikubeClient *clientv3.Client, coreResources []string, mapper *restmapper.DeferredDiscoveryRESTMapper) *kaf.APIKind {
@@ -72,10 +156,11 @@ func getTransactionHandler(authClient *authorizationclientv1.AuthorizationV1Clie
 
 	return &kaf.APIKind{
 		ApiResource: metav1.APIResource{
-			Name:       "transactions",
-			Namespaced: true,
-			Kind:       "Transaction",
-			Verbs:      []string{"create"},
+			Name:         "transactionrequests",
+			SingularName: "transactionrequest",
+			Namespaced:   true,
+			Kind:         "TransactionRequest",
+			Verbs:        []string{"create"},
 		},
 		CustomResource: &kaf.CustomResource{
 			CreateHandler: func(namespace, name string, w http.ResponseWriter, r *http.Request) {
@@ -94,19 +179,27 @@ func getTransactionHandler(authClient *authorizationclientv1.AuthorizationV1Clie
 					return
 				}
 
-				transaction := transactionRequest{}
-				if err := yaml.Unmarshal(body, &transaction); err != nil {
+				transaction, err := decodeTransactionRequest(body)
+				if err != nil {
 					http.Error(w, err.Error(), http.StatusBadRequest)
 
 					return
 				}
-				if transaction.Metadata.Namespace != "" && namespace != "" && transaction.Metadata.Namespace != namespace {
+
+				requestNamespace := namespace
+				if requestNamespace == "" {
+					requestNamespace = transactionRequestNamespace(r.URL.Path)
+				}
+				if transaction.Namespace != "" && requestNamespace != "" && transaction.Namespace != requestNamespace {
 					http.Error(w, "metadata.namespace does not match request namespace", http.StatusBadRequest)
 
 					return
 				}
+				if requestNamespace == "" {
+					requestNamespace = transaction.Namespace
+				}
 
-				if err := transactionAuthorizeAll(ctx, authClient, r.Header, &transaction, namespace, mapper); err != nil {
+				if err := transactionAuthorizeAll(ctx, authClient, r.Header, transaction, requestNamespace, mapper); err != nil {
 					http.Error(w, "resource forbidden", http.StatusForbidden)
 
 					return
@@ -114,22 +207,22 @@ func getTransactionHandler(authClient *authorizationclientv1.AuthorizationV1Clie
 
 				resources := map[string][]byte{}
 
-				for _, entry := range transaction.Spec.Create {
-					if err := transactionResourceMap(resources, entry, namespace, "create", coreResourcesMap, mapper); err != nil {
+				for _, entry := range transaction.Create {
+					if err := transactionResourceMap(resources, entry, requestNamespace, "create", coreResourcesMap, mapper); err != nil {
 						http.Error(w, err.Error(), http.StatusBadRequest)
 
 						return
 					}
 				}
-				for _, entry := range transaction.Spec.Update {
-					if err := transactionResourceMap(resources, entry, namespace, "update", coreResourcesMap, mapper); err != nil {
+				for _, entry := range transaction.Update {
+					if err := transactionResourceMap(resources, entry, requestNamespace, "update", coreResourcesMap, mapper); err != nil {
 						http.Error(w, err.Error(), http.StatusBadRequest)
 
 						return
 					}
 				}
-				for _, entry := range transaction.Spec.Delete {
-					if err := transactionResourceMap(resources, entry, namespace, "delete", coreResourcesMap, mapper); err != nil {
+				for _, entry := range transaction.Delete {
+					if err := transactionResourceMap(resources, entry, requestNamespace, "delete", coreResourcesMap, mapper); err != nil {
 						http.Error(w, err.Error(), http.StatusBadRequest)
 
 						return
@@ -142,10 +235,18 @@ func getTransactionHandler(authClient *authorizationclientv1.AuthorizationV1Clie
 					return
 				}
 
-				logger := transactionLogger.WithValues("namespace", namespace, "name", transaction.Metadata.Name, "operations", len(resources))
+				txnName := transaction.Name
+				if txnName == "" {
+					txnName = name
+				}
+				if txnName == "" {
+					txnName = fmt.Sprintf("txn-%d", time.Now().UnixNano())
+				}
+
+				logger := transactionLogger.WithValues("namespace", requestNamespace, "name", txnName, "operations", len(resources))
 				logger.Info("Creating transaction")
 
-				commitResp, err := transactionCommit(ctx, harikubeClient, resources)
+				commitResp, err := transactionCommit(ctx, harikubeClient, requestNamespace, txnName, resources)
 				if err != nil {
 					http.Error(w, err.Error(), http.StatusInternalServerError)
 
@@ -160,22 +261,14 @@ func getTransactionHandler(authClient *authorizationclientv1.AuthorizationV1Clie
 					return
 				}
 
-				responseName := transaction.Metadata.Name
-				if responseName == "" {
-					responseName = name
-				}
-				if responseName == "" {
-					responseName = "transaction"
-				}
-
 				resp := apiextv1.TransactionResponse{
 					TypeMeta: metav1.TypeMeta{
 						APIVersion: apiextv1.SchemeBuilder.GroupVersion.String(),
 						Kind:       "TransactionResponse",
 					},
 					ObjectMeta: metav1.ObjectMeta{
-						Namespace: namespace,
-						Name:      responseName,
+						Namespace: requestNamespace,
+						Name:      txnName,
 						CreationTimestamp: metav1.Time{
 							Time: time.Now(),
 						},
@@ -219,9 +312,14 @@ func getTransactionHandler(authClient *authorizationclientv1.AuthorizationV1Clie
 	}
 }
 
-func transactionResourceMap(resources map[string][]byte, entry map[string]interface{}, requestNamespace, operation string, coreResourcesMap map[string]bool, mapper *restmapper.DeferredDiscoveryRESTMapper) error {
-	apiVersion, _ := entry["apiVersion"].(string)
-	kind, _ := entry["kind"].(string)
+func transactionResourceMap(resources map[string][]byte, entry []byte, requestNamespace, operation string, coreResourcesMap map[string]bool, mapper *restmapper.DeferredDiscoveryRESTMapper) error {
+	obj := &unstructured.Unstructured{}
+	if _, _, err := unstructuredDecoder.Decode(entry, nil, obj); err != nil {
+		return err
+	}
+
+	apiVersion, _ := obj.Object["apiVersion"].(string)
+	kind, _ := obj.Object["kind"].(string)
 	if apiVersion == "" {
 		return fmt.Errorf("missing apiVersion in %s resource", operation)
 	}
@@ -246,13 +344,13 @@ func transactionResourceMap(resources map[string][]byte, entry map[string]interf
 	}
 
 	ns := requestNamespace
-	if metaEntry, ok := entry["metadata"].(map[interface{}]interface{}); ok {
+	if metaEntry, ok := obj.Object["metadata"].(map[interface{}]interface{}); ok {
 		if metaMap, ok := metaEntry["namespace"]; ok {
 			if nsStr, ok := metaMap.(string); ok && nsStr != "" {
 				ns = nsStr
 			}
 		}
-	} else if metaEntry, ok := entry["metadata"].(map[string]interface{}); ok {
+	} else if metaEntry, ok := obj.Object["metadata"].(map[string]interface{}); ok {
 		if metaMap, ok := metaEntry["namespace"]; ok {
 			if nsStr, ok := metaMap.(string); ok && nsStr != "" {
 				ns = nsStr
@@ -269,7 +367,7 @@ func transactionResourceMap(resources map[string][]byte, entry map[string]interf
 		return fmt.Errorf("failed to build etcd key for %s: %w", gvk.String(), err)
 	}
 
-	resourceName, _ := entry["metadata"].(map[interface{}]interface{})
+	resourceName, _ := obj.Object["metadata"].(map[interface{}]interface{})
 	var name string
 	if resourceName != nil {
 		if n, ok := resourceName["name"]; ok {
@@ -277,7 +375,7 @@ func transactionResourceMap(resources map[string][]byte, entry map[string]interf
 		}
 	}
 	if name == "" {
-		if resourceName, ok := entry["metadata"].(map[string]interface{}); ok {
+		if resourceName, ok := obj.Object["metadata"].(map[string]interface{}); ok {
 			if n, ok := resourceName["name"]; ok {
 				name, _ = n.(string)
 			}
@@ -287,7 +385,7 @@ func transactionResourceMap(resources map[string][]byte, entry map[string]interf
 		return fmt.Errorf("missing metadata.name in %s resource", operation)
 	}
 
-	value, err := yaml.Marshal(entry)
+	value, err := yaml.Marshal(obj.Object)
 	if err != nil {
 		return fmt.Errorf("failed to marshal %s resource: %w", operation, err)
 	}
@@ -308,18 +406,23 @@ func transactionAuthorizeAll(ctx context.Context, authClient *authorizationclien
 	cache := map[authKey]*authorizationv1.SubjectAccessReviewStatus{}
 
 	entries := []struct {
-		items []map[string]interface{}
+		items [][]byte
 		verb  string
 	}{
-		{items: transaction.Spec.Create, verb: "create"},
-		{items: transaction.Spec.Update, verb: "update"},
-		{items: transaction.Spec.Delete, verb: "delete"},
+		{items: transaction.Create, verb: "create"},
+		{items: transaction.Update, verb: "update"},
+		{items: transaction.Delete, verb: "delete"},
 	}
 
 	for _, group := range entries {
-		for _, entry := range group.items {
-			apiVersion, _ := entry["apiVersion"].(string)
-			kind, _ := entry["kind"].(string)
+		for i := range group.items {
+			obj := &unstructured.Unstructured{}
+			if _, _, err := unstructuredDecoder.Decode(group.items[i], nil, obj); err != nil {
+				return err
+			}
+
+			apiVersion, _ := obj.Object["apiVersion"].(string)
+			kind, _ := obj.Object["kind"].(string)
 			if apiVersion == "" || kind == "" {
 				continue
 			}
@@ -338,13 +441,13 @@ func transactionAuthorizeAll(ctx context.Context, authClient *authorizationclien
 			}
 
 			ns := requestNamespace
-			if metaEntry, ok := entry["metadata"].(map[interface{}]interface{}); ok {
+			if metaEntry, ok := obj.Object["metadata"].(map[interface{}]interface{}); ok {
 				if metaMap, ok := metaEntry["namespace"]; ok {
 					if nsStr, ok := metaMap.(string); ok && nsStr != "" {
 						ns = nsStr
 					}
 				}
-			} else if metaEntry, ok := entry["metadata"].(map[string]interface{}); ok {
+			} else if metaEntry, ok := obj.Object["metadata"].(map[string]interface{}); ok {
 				if metaMap, ok := metaEntry["namespace"]; ok {
 					if nsStr, ok := metaMap.(string); ok && nsStr != "" {
 						ns = nsStr

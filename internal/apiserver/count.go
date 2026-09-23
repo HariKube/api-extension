@@ -37,10 +37,11 @@ func getCountHandler(authClient *authorizationclientv1.AuthorizationV1Client, ha
 
 	return &kaf.APIKind{
 		ApiResource: metav1.APIResource{
-			Name:       "counts",
-			Namespaced: true,
-			Kind:       "CountResponse",
-			Verbs:      []string{"list"},
+			Name:         "counts",
+			SingularName: "count",
+			Namespaced:   true,
+			Kind:         "Count",
+			Verbs:        []string{"list"},
 		},
 		CustomResource: &kaf.CustomResource{
 			ListHandler: func(namespace, name string, w http.ResponseWriter, r *http.Request) {

@@ -23,9 +23,17 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -
 
 # Use distroless as minimal base image to package the manager binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details
-FROM gcr.io/distroless/static:nonroot
+FROM registry.access.redhat.com/ubi9/ubi-micro:latest
+LABEL name="HariKube API-Extension"
+LABEL vendor="inspirNation Bt."
+LABEL version="beta-v1.0.0-1"
+LABEL release="0"
+LABEL summary="API Extension to solve missing Kubernetes data capabilities"
+LABEL description="This extension implements counting, transactions, advanced filtering, etc."
+LABEL maintainer="richard.kovacs@harikube.com"
+COPY LICENSE /licenses/LICENSE
 WORKDIR /
 COPY --from=builder /workspace/manager .
-USER 65532:65532
+USER 65532
 
 ENTRYPOINT ["/manager"]

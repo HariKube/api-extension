@@ -19,9 +19,55 @@ import (
 	"k8s.io/client-go/restmapper"
 )
 
+func TestTransactionRequestNamespaceFromPath(t *testing.T) {
+	if got := transactionRequestNamespace("/apis/apiserver.api-extension.harikube.info/v1/namespaces/default/transactionrequests"); got != "default" {
+		t.Fatalf("transactionRequestNamespace() = %q, want %q", got, "default")
+	}
+	if got := transactionRequestNamespace("/apis/apiserver.api-extension.harikube.info/v1/transactionrequests"); got != "" {
+		t.Fatalf("transactionRequestNamespace() = %q, want empty", got)
+	}
+}
+
+func TestDecodeTransactionRequestPreservesResources(t *testing.T) {
+	body := []byte(`apiVersion: apiserver.api-extension.harikube.info/v1
+kind: TransactionRequest
+metadata:
+  name: update-wallets
+  namespace: default
+spec:
+  create:
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: wallet-alice
+`)
+
+	transaction, err := decodeTransactionRequest(body)
+	if err != nil {
+		t.Fatalf("decodeTransactionRequest() error = %v", err)
+	}
+	if transaction.Name != "update-wallets" {
+		t.Fatalf("name = %q, want %q", transaction.Name, "update-wallets")
+	}
+	if transaction.Namespace != "default" {
+		t.Fatalf("namespace = %q, want %q", transaction.Namespace, "default")
+	}
+	if len(transaction.Create) != 1 {
+		t.Fatalf("len(create) = %d, want 1", len(transaction.Create))
+	}
+
+	var resource map[string]interface{}
+	if err := yaml.Unmarshal(transaction.Create[0], &resource); err != nil {
+		t.Fatalf("yaml.Unmarshal() error = %v", err)
+	}
+	if resource["kind"] != "ConfigMap" {
+		t.Fatalf("resource kind = %v, want %q", resource["kind"], "ConfigMap")
+	}
+}
+
 func TestTransactionCreateHandlerStoresRequestInEtcd(t *testing.T) {
 	body := `apiVersion: apiserver.api-extension.harikube.info/v1
-kind: Transaction
+kind: TransactionRequest
 metadata:
   name: make-payment-XXX
 spec:
@@ -56,8 +102,14 @@ spec:
 		}, nil
 	}
 
-	var gotResources map[string][]byte
-	transactionCommit = func(_ context.Context, _ *clientv3.Client, resources map[string][]byte) (*clientv3.TxnResponse, error) {
+	var (
+		gotNamespace string
+		gotName      string
+		gotResources map[string][]byte
+	)
+	transactionCommit = func(_ context.Context, _ *clientv3.Client, namespace, name string, resources map[string][]byte) (*clientv3.TxnResponse, error) {
+		gotNamespace = namespace
+		gotName = name
 		gotResources = resources
 
 		return &clientv3.TxnResponse{
@@ -68,17 +120,24 @@ spec:
 
 	handler := getTransactionHandler(&authorizationclientv1.AuthorizationV1Client{}, &clientv3.Client{}, []string{""}, &restmapper.DeferredDiscoveryRESTMapper{})
 
-	req := httptest.NewRequest(http.MethodPost, "/apis/apiserver.api-extension.harikube.info/namespaces/default/transactions", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/apis/apiserver.api-extension.harikube.info/namespaces/default/transactionrequests", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/yaml")
 	rec := httptest.NewRecorder()
 
-	handler.CustomResource.CreateHandler("default", "", rec, req)
+	handler.CustomResource.CreateHandler("", "", rec, req)
 
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusCreated)
 	}
 	if got := rec.Header().Get("Content-Type"); got != "application/yaml" {
 		t.Fatalf("content type = %q, want %q", got, "application/yaml")
+	}
+
+	if gotNamespace != "default" {
+		t.Fatalf("commit namespace = %q, want %q", gotNamespace, "default")
+	}
+	if gotName != "make-payment-XXX" {
+		t.Fatalf("commit name = %q, want %q", gotName, "make-payment-XXX")
 	}
 
 	if len(gotResources) != 1 {
@@ -122,7 +181,7 @@ spec:
 
 func TestTransactionCreateHandlerBuildsResourceMapForAllOperations(t *testing.T) {
 	body := `apiVersion: apiserver.api-extension.harikube.info/v1
-kind: Transaction
+kind: TransactionRequest
 metadata:
   name: make-payment-XXX
 spec:
@@ -171,7 +230,7 @@ spec:
 	}
 
 	var gotResources map[string][]byte
-	transactionCommit = func(_ context.Context, _ *clientv3.Client, resources map[string][]byte) (*clientv3.TxnResponse, error) {
+	transactionCommit = func(_ context.Context, _ *clientv3.Client, _, _ string, resources map[string][]byte) (*clientv3.TxnResponse, error) {
 		gotResources = resources
 
 		return &clientv3.TxnResponse{
@@ -182,7 +241,7 @@ spec:
 
 	handler := getTransactionHandler(&authorizationclientv1.AuthorizationV1Client{}, &clientv3.Client{}, []string{""}, &restmapper.DeferredDiscoveryRESTMapper{})
 
-	req := httptest.NewRequest(http.MethodPost, "/apis/apiserver.api-extension.harikube.info/namespaces/default/transactions", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/apis/apiserver.api-extension.harikube.info/namespaces/default/transactionrequests", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/yaml")
 	rec := httptest.NewRecorder()
 
@@ -229,7 +288,7 @@ func TestTransactionCreateHandlerRejectsEmptySpec(t *testing.T) {
 	}
 
 	var commitCalled bool
-	transactionCommit = func(_ context.Context, _ *clientv3.Client, _ map[string][]byte) (*clientv3.TxnResponse, error) {
+	transactionCommit = func(_ context.Context, _ *clientv3.Client, _, _ string, _ map[string][]byte) (*clientv3.TxnResponse, error) {
 		commitCalled = true
 
 		return nil, nil
@@ -237,7 +296,7 @@ func TestTransactionCreateHandlerRejectsEmptySpec(t *testing.T) {
 
 	handler := getTransactionHandler(&authorizationclientv1.AuthorizationV1Client{}, &clientv3.Client{}, []string{""}, &restmapper.DeferredDiscoveryRESTMapper{})
 
-	req := httptest.NewRequest(http.MethodPost, "/apis/apiserver.api-extension.harikube.info/namespaces/default/transactions", strings.NewReader("kind: Transaction\nmetadata:\n  name: missing-spec\nspec: {}\n"))
+	req := httptest.NewRequest(http.MethodPost, "/apis/apiserver.api-extension.harikube.info/namespaces/default/transactionrequests", strings.NewReader("kind: Transaction\nmetadata:\n  name: missing-spec\nspec: {}\n"))
 	rec := httptest.NewRecorder()
 
 	handler.CustomResource.CreateHandler("default", "", rec, req)
@@ -269,15 +328,15 @@ func TestTransactionCreateHandlerReturnsForbiddenWhenUnauthorized(t *testing.T) 
 			Scope:    meta.RESTScopeNamespace,
 		}, nil
 	}
-	transactionCommit = func(_ context.Context, _ *clientv3.Client, _ map[string][]byte) (*clientv3.TxnResponse, error) {
+	transactionCommit = func(_ context.Context, _ *clientv3.Client, _, _ string, _ map[string][]byte) (*clientv3.TxnResponse, error) {
 		t.Fatal("transactionCommit should not be called")
 		return nil, nil
 	}
 
 	handler := getTransactionHandler(&authorizationclientv1.AuthorizationV1Client{}, &clientv3.Client{}, []string{""}, &restmapper.DeferredDiscoveryRESTMapper{})
 
-	req := httptest.NewRequest(http.MethodPost, "/apis/apiserver.api-extension.harikube.info/namespaces/default/transactions", strings.NewReader(`apiVersion: apiserver.api-extension.harikube.info/v1
-kind: Transaction
+	req := httptest.NewRequest(http.MethodPost, "/apis/apiserver.api-extension.harikube.info/namespaces/default/transactionrequests", strings.NewReader(`apiVersion: apiserver.api-extension.harikube.info/v1
+kind: TransactionRequest
 metadata:
   name: denied
 spec:
@@ -307,14 +366,14 @@ func TestTransactionCreateHandlerRejectsInvalidBody(t *testing.T) {
 	transactionSubjectAccessReview = func(_ context.Context, _ *authorizationclientv1.AuthorizationV1Client, _ *authorizationv1.ResourceAttributes, _ http.Header) (*authorizationv1.SubjectAccessReview, error) {
 		return &authorizationv1.SubjectAccessReview{Status: authorizationv1.SubjectAccessReviewStatus{Allowed: true}}, nil
 	}
-	transactionCommit = func(_ context.Context, _ *clientv3.Client, _ map[string][]byte) (*clientv3.TxnResponse, error) {
+	transactionCommit = func(_ context.Context, _ *clientv3.Client, _, _ string, _ map[string][]byte) (*clientv3.TxnResponse, error) {
 		t.Fatal("transactionCommit should not be called")
 		return nil, nil
 	}
 
 	handler := getTransactionHandler(&authorizationclientv1.AuthorizationV1Client{}, &clientv3.Client{}, []string{""}, &restmapper.DeferredDiscoveryRESTMapper{})
 
-	req := httptest.NewRequest(http.MethodPost, "/apis/apiserver.api-extension.harikube.info/namespaces/default/transactions", strings.NewReader(": invalid"))
+	req := httptest.NewRequest(http.MethodPost, "/apis/apiserver.api-extension.harikube.info/namespaces/default/transactionrequests", strings.NewReader(": invalid"))
 	rec := httptest.NewRecorder()
 
 	handler.CustomResource.CreateHandler("default", "", rec, req)
@@ -326,7 +385,7 @@ func TestTransactionCreateHandlerRejectsInvalidBody(t *testing.T) {
 
 func TestTransactionCreateHandlerCachesSubjectAccessReviewPerResourceType(t *testing.T) {
 	body := `apiVersion: apiserver.api-extension.harikube.info/v1
-kind: Transaction
+kind: TransactionRequest
 metadata:
   name: make-payment-XXX
 spec:
@@ -382,7 +441,7 @@ spec:
 		}, nil
 	}
 
-	transactionCommit = func(_ context.Context, _ *clientv3.Client, _ map[string][]byte) (*clientv3.TxnResponse, error) {
+	transactionCommit = func(_ context.Context, _ *clientv3.Client, _, _ string, _ map[string][]byte) (*clientv3.TxnResponse, error) {
 		return &clientv3.TxnResponse{
 			Succeeded: true,
 			Header:    &etcdserverpb.ResponseHeader{Revision: 7},
@@ -391,7 +450,7 @@ spec:
 
 	handler := getTransactionHandler(&authorizationclientv1.AuthorizationV1Client{}, &clientv3.Client{}, []string{""}, &restmapper.DeferredDiscoveryRESTMapper{})
 
-	req := httptest.NewRequest(http.MethodPost, "/apis/apiserver.api-extension.harikube.info/namespaces/default/transactions", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/apis/apiserver.api-extension.harikube.info/namespaces/default/transactionrequests", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/yaml")
 	rec := httptest.NewRecorder()
 
@@ -407,7 +466,7 @@ spec:
 
 func TestTransactionCreateHandlerReturnsForbiddenWhenIndividualResourceDenied(t *testing.T) {
 	body := `apiVersion: apiserver.api-extension.harikube.info/v1
-kind: Transaction
+kind: TransactionRequest
 metadata:
   name: make-payment-XXX
 spec:
@@ -449,7 +508,7 @@ spec:
 		}, nil
 	}
 	var commitCalled bool
-	transactionCommit = func(_ context.Context, _ *clientv3.Client, _ map[string][]byte) (*clientv3.TxnResponse, error) {
+	transactionCommit = func(_ context.Context, _ *clientv3.Client, _, _ string, _ map[string][]byte) (*clientv3.TxnResponse, error) {
 		commitCalled = true
 
 		return nil, nil
@@ -457,7 +516,7 @@ spec:
 
 	handler := getTransactionHandler(&authorizationclientv1.AuthorizationV1Client{}, &clientv3.Client{}, []string{""}, &restmapper.DeferredDiscoveryRESTMapper{})
 
-	req := httptest.NewRequest(http.MethodPost, "/apis/apiserver.api-extension.harikube.info/namespaces/default/transactions", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/apis/apiserver.api-extension.harikube.info/namespaces/default/transactionrequests", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/yaml")
 	rec := httptest.NewRecorder()
 

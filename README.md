@@ -37,9 +37,9 @@ kubectl get --raw "/apis/apiserver.api-extension.harikube.info/v1/namespaces/def
 ### Transaction
 
 ```bash
-cat <<EOF | kubectl create --raw "/apis/apiserver.api-extension.harikube.info/namespaces/default/transactions" -f -
+cat <<EOF | kubectl create --raw "/apis/apiserver.api-extension.harikube.info/namespaces/default/transactionrequests" -f -
 apiVersion: apiserver.api-extension.harikube.info
-kind: Transaction
+kind: TransactionReqest
 metadata:
   name: make-payment-XXX
 spec:

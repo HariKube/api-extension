@@ -23,15 +23,17 @@ import (
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
-// TransactionSpec defines the desired state of Transaction
-type TransactionSpec struct {
-	Resources [][]byte `json:"resources"`
+// TransactionRequestSpec defines the desired state of Transaction
+type TransactionRequestSpec struct {
+	Create [][]byte `json:"create" yaml:"create"`
+	Update [][]byte `json:"update" yaml:"update"`
+	Delete [][]byte `json:"delete" yaml:"delete"`
 }
 
 // +kubebuilder:object:root=true
 
-// Transaction is the Schema for the Transactions API
-type Transaction struct {
+// TransactionRequest is the Schema for the Transactions API
+type TransactionRequest struct {
 	metav1.TypeMeta `json:",inline"`
 
 	// metadata is a standard object metadata
@@ -40,16 +42,16 @@ type Transaction struct {
 
 	// spec defines the desired state of Transaction
 	// +required
-	Spec TransactionSpec `json:"spec"`
+	Spec TransactionRequestSpec `json:"spec"`
 }
 
 // +kubebuilder:object:root=true
 
-// TransactionList contains a list of Transaction
-type TransactionList struct {
+// TransactionRequestList contains a list of Transaction
+type TransactionRequestList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitzero"`
-	Items           []Transaction `json:"items"`
+	Items           []TransactionRequest `json:"items"`
 }
 
 // TransactionResponseSpec defines the actual state of Transaction
@@ -83,5 +85,5 @@ type TransactionResponseList struct {
 }
 
 func init() {
-	SchemeBuilder.Register(&Transaction{}, &TransactionList{}, &TransactionResponse{}, &TransactionResponseList{})
+	SchemeBuilder.Register(&TransactionRequest{}, &TransactionRequestList{}, &TransactionResponse{}, &TransactionResponseList{})
 }
