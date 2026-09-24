@@ -3,7 +3,7 @@ TAG ?= $(shell git describe --tags --abbrev=0)
 IMG ?= harikube/api-extension:$(TAG)
 
 ifneq ($(shell git status -s | wc -l), 0)
-IMG := $(IMG)-$$(git diff | md5sum | cut -c6-)
+IMG := $(IMG)-$$(git diff | md5sum | cut -c1-5)
 endif
 
 
