@@ -24,7 +24,7 @@ jobs:
   test-integration:
     strategy:
       matrix:
-        kubeVersion: [ v1.34.0 ]
+        kubeVersion: [ v1.36.2 ]
     name: Run on Ubuntu
     runs-on: ubuntu-latest
     steps:
