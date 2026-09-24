@@ -185,6 +185,47 @@ spec:
 EOF
 ```
 
+### Text Search
+
+Provides full-text indexing and search over projected Kubernetes resource fields such as titles, descriptions, annotations, and tags. Following the aggregation-layer pattern from the microservice blog post, the API server can maintain a dedicated metadata index, return scored matches plus highlights, and optionally feed the matched object references back into `Query` for richer structured filtering.
+
+```bash
+cat <<EOF | kubectl create --raw "/apis/apiserver.api-extension.harikube.info/namespaces/default/textsearchrequests" -f -
+apiVersion: apiserver.api-extension.harikube.info
+kind: TextSearchRequest
+metadata:
+  name: tasks-about-payments
+spec:
+  resource:
+    apiVersion: stable.harikube.info/v1
+    kind: Task
+    namespace: default
+  index:
+    analyzer: standard
+    fields:
+    - path: .metadata.name
+      weight: 2
+    - path: .spec.title
+      weight: 5
+    - path: .spec.description
+      weight: 3
+    - path: .spec.tags[*]
+      weight: 2
+  search:
+    query: '"payment retry" OR invoice'
+    defaultOperator: and
+    fuzziness: 1
+  project:
+  - path: .metadata.uid
+  - path: .metadata.name
+  - path: .spec.title
+  - path: .spec.status
+  limit: 20
+EOF
+
+kubectl get textsearchrequests tasks-about-payments -n default -o jsonpath='{.status.hits[*].object.metadata.name}'
+```
+
 ### Distinct
 
 Returns the unique values for a projected field across matching resources. This is useful for discovering active tenants, regions, labels, node names, or any other deduplicated application dimension stored in Kubernetes objects.
