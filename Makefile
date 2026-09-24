@@ -2,16 +2,10 @@
 TAG ?= $(shell git describe --tags --abbrev=0)
 IMG ?= harikube/api-extension:$(TAG)
 
-DIFF = $(shell git rev-list refs/tags/$(TAG)..HEAD --count)
-ifneq ($(DIFF),)
-ifneq ($(DIFF), 0)
-IMG := $(IMG)-$(DIFF)
-endif
+ifneq ($(shell git status -s | wc -l), 0)
+IMG := $(IMG)-dirty-$$(date +'%s')
 endif
 
-ifneq ($(shell git status -s | wc -l), 0)
-IMG := $(IMG)-dirty
-endif
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -78,7 +72,7 @@ test: manifests generate fmt vet setup-envtest ## Run tests.
 # CertManager is installed by default; skip with:
 # - CERT_MANAGER_INSTALL_SKIP=true
 KIND_CLUSTER ?= api-extension-test-e2e
-KUBE_VERSION ?= v1.34.0
+KUBE_VERSION ?= v1.36.2
 
 .PHONY: setup-test-integration
 setup-test-integration: cleanup-test-integration ## Set up a Kind cluster for integration tests if it does not exist
@@ -87,13 +81,15 @@ setup-test-integration: cleanup-test-integration ## Set up a Kind cluster for in
 		exit 1; \
 	}
 
+	docker run -d \
+		--name harikube_middleware \
+		--net=host \
+		quay.io/harikube/harikube:dev-v0.16.4-1 \
+		--listen-address=0.0.0.0:2369 --endpoint='sqlite:///db/main.db?_journal_mode=WAL&_busy_timeout=30000&_synchronous=NORMAL&_txlock=immediate&_stmt_cache_size=20&cache=shared'
+
 	$(KIND) create cluster --name $(KIND_CLUSTER) --config test/integration/kind-configs/config-$(KUBE_VERSION).yaml
 
 	$(KUBECTL) wait --for=condition=Ready node/$(KIND_CLUSTER)-control-plane --timeout=120s
-
-	$(CHAINSAW) test --test-dir test/integration/00-init
-
-	$(VCLUTER) connect harikube
 
 	TAG=$(TAG) $(CHAINSAW) test --test-dir test/integration/01-build
 	TAG=$(TAG) $(CHAINSAW) test --test-dir test/integration/02-deploy
@@ -212,7 +208,6 @@ KIND ?= $(DEVBOXBIN)/kind
 KUSTOMIZE ?= $(DEVBOXBIN)/kustomize
 CONTROLLER_GEN ?= $(DEVBOXBIN)/controller-gen
 CHAINSAW ?= $(DEVBOXBIN)/chainsaw
-VCLUTER ?= $(DEVBOXBIN)/vcluster
 ENVTEST ?= $(LOCALBIN)/setup-envtest
 GOLANGCI_LINT = $(DEVBOXBIN)/golangci-lint
 
