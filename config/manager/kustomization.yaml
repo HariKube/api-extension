@@ -7,4 +7,4 @@ kind: Kustomization
 images:
 - name: controller
   newName: harikube/api-extension
-  newTag: alpha-v1.0.0-1--dirty
+  newTag: v0.0.1-d41d8

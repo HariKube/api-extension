@@ -3,7 +3,7 @@ TAG ?= $(shell git describe --tags --abbrev=0)
 IMG ?= harikube/api-extension:$(TAG)
 
 ifneq ($(shell git status -s | wc -l), 0)
-IMG := $(IMG)-$$(git diff | md5sum | cut -c1-5)
+IMG := $(IMG)-$$(git diff -- . ':!config/manager/kustomization.yaml' | md5sum | cut -c1-5)
 endif
 
 
@@ -82,10 +82,11 @@ setup-test-integration: cleanup-test-integration ## Set up a Kind cluster for in
 	}
 
 	docker run -d \
-		--name harikube_middleware \
+		--name harikube_middleware_api_ext \
 		--net=host \
 		quay.io/harikube/harikube:dev-v0.16.4-1 \
-		--listen-address=0.0.0.0:2369 --endpoint='sqlite:///db/main.db?_journal_mode=WAL&_busy_timeout=30000&_synchronous=NORMAL&_txlock=immediate&_stmt_cache_size=20&cache=shared'
+		--metrics-bind-address=0 \
+		--listen-address=0.0.0.0:23691 --endpoint='sqlite:///db/main.db?_journal_mode=WAL&_busy_timeout=30000&_synchronous=NORMAL&_txlock=immediate&_stmt_cache_size=20&cache=shared'
 
 	$(KIND) create cluster --name $(KIND_CLUSTER) --config test/integration/kind-configs/config-$(KUBE_VERSION).yaml
 
@@ -102,6 +103,7 @@ _test-integration-run:
 
 .PHONY: cleanup-test-integration
 cleanup-test-integration: ## Tear down the Kind cluster used for integration tests
+	@docker rm -f harikube_middleware_api_ext ||:
 	@$(KIND) delete cluster --name $(KIND_CLUSTER)
 
 .PHONY: lint
