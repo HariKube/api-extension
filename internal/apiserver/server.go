@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"net/http"
 	"strings"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc"
+	authorizationv1 "k8s.io/api/authorization/v1"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/discovery/cached/memory"
 	authclientv1 "k8s.io/client-go/kubernetes/typed/authorization/v1"
@@ -104,7 +106,17 @@ func (s *searchAPIServer) Start(ctx context.Context) (err error) {
 	countHandler := getCountHandler(authClient, harikubeClient, s.coreResources, mapper)
 	transactionHandler := getTransactionHandler(authClient, harikubeClient, s.coreResources, mapper)
 	queryHandler := getQueryHandler(authClient, harikubeClient)
-	decisionHandler := getDecisionHandler(authClient, s.decisionMakerURL, s.decisionMakerTimeout)
+	decisionHandler := getDecisionHandler(decisionHandlerConfig{
+		authorize: func(
+			ctx context.Context,
+			resourceAttributes *authorizationv1.ResourceAttributes,
+			headers http.Header,
+		) (*authorizationv1.SubjectAccessReview, error) {
+			return decisionSubjectAccessReview(ctx, authClient, resourceAttributes, headers)
+		},
+		decisionMakerURL:     s.decisionMakerURL,
+		decisionMakerTimeout: s.decisionMakerTimeout,
+	})
 
 	s.Server = *kaf.NewServer(kaf.ServerConfig{
 		Port:     s.port,

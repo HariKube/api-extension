@@ -14,7 +14,6 @@ import (
 	"go.yaml.in/yaml/v2"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	authorizationclientv1 "k8s.io/client-go/kubernetes/typed/authorization/v1"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -59,13 +58,21 @@ type decisionSystemOneResponse struct {
 	Usage   map[string]interface{} `json:"usage,omitempty"`
 }
 
-func getDecisionHandler(authClient *authorizationclientv1.AuthorizationV1Client, decisionMakerURL string, decisionMakerTimeout time.Duration) *kaf.APIKind {
-	endpoint := strings.TrimSpace(decisionMakerURL)
+type decisionAuthorizer func(context.Context, *authorizationv1.ResourceAttributes, http.Header) (*authorizationv1.SubjectAccessReview, error)
+
+type decisionHandlerConfig struct {
+	authorize            decisionAuthorizer
+	decisionMakerURL     string
+	decisionMakerTimeout time.Duration
+}
+
+func getDecisionHandler(config decisionHandlerConfig) *kaf.APIKind {
+	endpoint := strings.TrimSpace(config.decisionMakerURL)
 	if endpoint == "" {
 		endpoint = defaultDecisionMakerURL
 	}
-	if decisionMakerTimeout <= 0 {
-		decisionMakerTimeout = defaultDecisionMakerTimeout
+	if config.decisionMakerTimeout <= 0 {
+		config.decisionMakerTimeout = defaultDecisionMakerTimeout
 	}
 
 	return &kaf.APIKind{
@@ -78,10 +85,10 @@ func getDecisionHandler(authClient *authorizationclientv1.AuthorizationV1Client,
 		},
 		CustomResource: &kaf.CustomResource{
 			CreateHandler: func(namespace, name string, w http.ResponseWriter, r *http.Request) {
-				ctx, cancel := context.WithTimeout(r.Context(), decisionMakerTimeout)
+				ctx, cancel := context.WithTimeout(r.Context(), config.decisionMakerTimeout)
 				defer cancel()
 
-				if result, err := decisionSubjectAccessReview(ctx, authClient,
+				if result, err := config.authorize(ctx,
 					&authorizationv1.ResourceAttributes{
 						Namespace: namespace,
 						Verb:      "create",
@@ -297,7 +304,11 @@ func invokeDecisionMakerHTTP(ctx context.Context, endpoint string, request *deci
 	if err != nil {
 		return nil, fmt.Errorf("call decision maker: %w", err)
 	}
-	defer httpResponse.Body.Close()
+	defer func() {
+		if err := httpResponse.Body.Close(); err != nil {
+			decisionLogger.Info("Close error", "error", err)
+		}
+	}()
 
 	responseBody, err := io.ReadAll(httpResponse.Body)
 	if err != nil {

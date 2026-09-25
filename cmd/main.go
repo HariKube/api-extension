@@ -102,8 +102,18 @@ func main() {
 	flag.StringVar(&harikubeKeyFile, "harikube-key-file", "", "The KEY of the HariKube backend.")
 	flag.StringVar(&harikubeCAFile, "harikube-ca-file", "", "The CA of the HariKube backend.")
 	flag.BoolVar(&harikubeSkipVerify, "harikube-skip-verify", false, "The TLS skip verify flag of the HariKube backend.")
-	flag.StringVar(&decisionMakerURL, "decision-maker-url", apiserver.DefaultDecisionMakerURL(), "The base system-one endpoint exposed by the decision maker sidecar.")
-	flag.DurationVar(&decisionMakerTimeout, "decision-maker-timeout", apiserver.DefaultDecisionMakerTimeout(), "The timeout used for decision maker requests.")
+	flag.StringVar(
+		&decisionMakerURL,
+		"decision-maker-url",
+		apiserver.DefaultDecisionMakerURL(),
+		"The base system-one endpoint exposed by the decision maker sidecar.",
+	)
+	flag.DurationVar(
+		&decisionMakerTimeout,
+		"decision-maker-timeout",
+		apiserver.DefaultDecisionMakerTimeout(),
+		"The timeout used for decision maker requests.",
+	)
 	opts := zap.Options{
 		Development: true,
 	}

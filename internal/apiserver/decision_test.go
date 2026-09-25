@@ -46,7 +46,17 @@ func TestDecisionCreateHandlerCallsDecisionMakerAndReturnsDecisionResponse(t *te
 		}, nil
 	}
 
-	handler := getDecisionHandler(nil, "http://decision-maker.system-one.svc/system-one", 5*time.Second)
+	handler := getDecisionHandler(decisionHandlerConfig{
+		authorize: func(
+			ctx context.Context,
+			resourceAttributes *authorizationv1.ResourceAttributes,
+			headers http.Header,
+		) (*authorizationv1.SubjectAccessReview, error) {
+			return decisionSubjectAccessReview(ctx, nil, resourceAttributes, headers)
+		},
+		decisionMakerURL:     "http://decision-maker.system-one.svc/system-one",
+		decisionMakerTimeout: 5 * time.Second,
+	})
 
 	body := `apiVersion: apiserver.api-extension.harikube.info/v1
 kind: DecisionRequest
@@ -144,7 +154,17 @@ func TestDecisionCreateHandlerReturnsForbiddenWhenUnauthorized(t *testing.T) {
 		return nil, nil
 	}
 
-	handler := getDecisionHandler(nil, defaultDecisionMakerURL, 5*time.Second)
+	handler := getDecisionHandler(decisionHandlerConfig{
+		authorize: func(
+			ctx context.Context,
+			resourceAttributes *authorizationv1.ResourceAttributes,
+			headers http.Header,
+		) (*authorizationv1.SubjectAccessReview, error) {
+			return decisionSubjectAccessReview(ctx, nil, resourceAttributes, headers)
+		},
+		decisionMakerURL:     defaultDecisionMakerURL,
+		decisionMakerTimeout: 5 * time.Second,
+	})
 
 	req := httptest.NewRequest(http.MethodPost, "/apis/apiserver.api-extension.harikube.info/v1/namespaces/default/decisionrequests", strings.NewReader("kind: DecisionRequest\nmetadata:\n  name: denied\n"))
 	rec := httptest.NewRecorder()
@@ -172,7 +192,17 @@ func TestDecisionCreateHandlerRejectsNamespaceMismatch(t *testing.T) {
 		return nil, nil
 	}
 
-	handler := getDecisionHandler(nil, defaultDecisionMakerURL, 5*time.Second)
+	handler := getDecisionHandler(decisionHandlerConfig{
+		authorize: func(
+			ctx context.Context,
+			resourceAttributes *authorizationv1.ResourceAttributes,
+			headers http.Header,
+		) (*authorizationv1.SubjectAccessReview, error) {
+			return decisionSubjectAccessReview(ctx, nil, resourceAttributes, headers)
+		},
+		decisionMakerURL:     defaultDecisionMakerURL,
+		decisionMakerTimeout: 5 * time.Second,
+	})
 
 	body := `kind: DecisionRequest
 metadata:
@@ -212,7 +242,17 @@ func TestDecisionCreateHandlerRejectsInvalidChoiceCriteria(t *testing.T) {
 		return nil, nil
 	}
 
-	handler := getDecisionHandler(nil, defaultDecisionMakerURL, 5*time.Second)
+	handler := getDecisionHandler(decisionHandlerConfig{
+		authorize: func(
+			ctx context.Context,
+			resourceAttributes *authorizationv1.ResourceAttributes,
+			headers http.Header,
+		) (*authorizationv1.SubjectAccessReview, error) {
+			return decisionSubjectAccessReview(ctx, nil, resourceAttributes, headers)
+		},
+		decisionMakerURL:     defaultDecisionMakerURL,
+		decisionMakerTimeout: 5 * time.Second,
+	})
 
 	body := `kind: DecisionRequest
 metadata:
