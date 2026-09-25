@@ -1,0 +1,12 @@
+- op: add
+  path: /spec/template/spec/containers/1/volumeMounts/-
+  value:
+    mountPath: /var/cache/laya
+    name: decision-maker-cache
+
+- op: add
+  path: /spec/template/spec/volumes/-
+  value:
+    name: decision-maker-cache
+    persistentVolumeClaim:
+      claimName: api-extension-decision-maker-cache

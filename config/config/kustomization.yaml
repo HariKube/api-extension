@@ -12,7 +12,6 @@ resources:
 - namespace.yaml
 - core-resources.yaml
 - decision-maker.yaml
-- decision-maker-cache-pvc.yaml
 
 generatorOptions:
   disableNameSuffixHash: true

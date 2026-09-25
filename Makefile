@@ -77,6 +77,8 @@ DECISION_MAKER_PROVIDER ?= mock
 DECISION_MAKER_TIMEOUT ?= 30s
 DECISION_MAKER_CONFIG ?= config/config/decision-maker.yaml
 DECISION_MAKER_CONFIG_WRAPPER ?= ./hack/with-decision-maker-config.sh
+CONFIG_KUSTOMIZATION = $(if $(filter laya,$(DECISION_MAKER_PROVIDER)),config/config-laya,config/config)
+DEFAULT_KUSTOMIZATION = $(if $(filter laya,$(DECISION_MAKER_PROVIDER)),config/default-laya,config/default)
 
 .PHONY: setup-test-integration
 setup-test-integration: cleanup-test-integration ## Set up a Kind cluster for integration tests if it does not exist
@@ -165,10 +167,10 @@ docker-buildx: ## Build and push docker image for the manager for cross-platform
 	rm Dockerfile.cross
 
 .PHONY: build-installer
-build-installer: manifests generate ## Generate a consolidated YAML with CRDs and deployment.
+build-installer: manifests generate ## Generate a consolidated YAML with CRDs, config, and deployment.
 	mkdir -p dist
 	cd config/manager && "$(KUSTOMIZE)" edit set image controller=${IMG}
-	DECISION_MAKER_PROVIDER=$(DECISION_MAKER_PROVIDER) DECISION_MAKER_TIMEOUT=$(DECISION_MAKER_TIMEOUT) $(DECISION_MAKER_CONFIG_WRAPPER) $(DECISION_MAKER_CONFIG) bash -lc '"$(KUSTOMIZE)" build config/default > dist/install.yaml'
+	DECISION_MAKER_PROVIDER=$(DECISION_MAKER_PROVIDER) DECISION_MAKER_TIMEOUT=$(DECISION_MAKER_TIMEOUT) $(DECISION_MAKER_CONFIG_WRAPPER) $(DECISION_MAKER_CONFIG) bash -lc '{ "$(KUSTOMIZE)" build $(CONFIG_KUSTOMIZATION); printf -- "\n---\n"; "$(KUSTOMIZE)" build $(DEFAULT_KUSTOMIZATION); } > dist/install.yaml'
 
 ##@ Deployment
 
@@ -189,7 +191,7 @@ uninstall: manifests ## Uninstall CRDs from the K8s cluster specified in ~/.kube
 .PHONY: deploy
 deploy: manifests ## Deploy controller to the K8s cluster specified in ~/.kube/config.
 	cd config/manager && "$(KUSTOMIZE)" edit set image controller=${IMG}
-	DECISION_MAKER_PROVIDER=$(DECISION_MAKER_PROVIDER) DECISION_MAKER_TIMEOUT=$(DECISION_MAKER_TIMEOUT) $(DECISION_MAKER_CONFIG_WRAPPER) $(DECISION_MAKER_CONFIG) bash -lc '"$(KUSTOMIZE)" build config/config | "$(KUBECTL)" apply -f - && "$(KUSTOMIZE)" build config/default | "$(KUBECTL)" apply -f -'
+	DECISION_MAKER_PROVIDER=$(DECISION_MAKER_PROVIDER) DECISION_MAKER_TIMEOUT=$(DECISION_MAKER_TIMEOUT) $(DECISION_MAKER_CONFIG_WRAPPER) $(DECISION_MAKER_CONFIG) bash -lc '"$(KUSTOMIZE)" build $(CONFIG_KUSTOMIZATION) | "$(KUBECTL)" apply -f - && "$(KUSTOMIZE)" build $(DEFAULT_KUSTOMIZATION) | "$(KUBECTL)" apply -f -'
 
 .PHONY: redeploy
 redeploy: deploy ## Redeploy controller to the K8s cluster specified in ~/.kube/config.
@@ -268,5 +270,5 @@ package: manifests generate
 
 	cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
 
-	DECISION_MAKER_PROVIDER=$(DECISION_MAKER_PROVIDER) DECISION_MAKER_TIMEOUT=$(DECISION_MAKER_TIMEOUT) $(DECISION_MAKER_CONFIG_WRAPPER) $(DECISION_MAKER_CONFIG) bash -lc 'rm -f package/bundle-$(TAG).yaml package/bundle-config-$(TAG).yaml && $(KUSTOMIZE) build config/default > package/bundle-$(TAG).yaml && $(KUSTOMIZE) build config/config > package/bundle-config-$(TAG).yaml'
+	DECISION_MAKER_PROVIDER=$(DECISION_MAKER_PROVIDER) DECISION_MAKER_TIMEOUT=$(DECISION_MAKER_TIMEOUT) $(DECISION_MAKER_CONFIG_WRAPPER) $(DECISION_MAKER_CONFIG) bash -lc 'rm -f package/bundle-$(TAG).yaml package/bundle-config-$(TAG).yaml && $(KUSTOMIZE) build $(CONFIG_KUSTOMIZATION) > package/bundle-config-$(TAG).yaml && { cat package/bundle-config-$(TAG).yaml; printf -- "\n---\n"; $(KUSTOMIZE) build $(DEFAULT_KUSTOMIZATION); } > package/bundle-$(TAG).yaml'
 	

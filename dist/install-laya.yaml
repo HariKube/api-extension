@@ -1,0 +1,929 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: api-extension
+    control-plane: controller-manager
+  name: harikube
+---
+apiVersion: v1
+data:
+  resources: ',apps,batch,storage.k8s.io,coordination.k8s.io,autoscaling,policy,rbac.authorization.k8s.io,networking.k8s.io,certificates.k8s.io,admissionregistration.k8s.io,apiextensions.k8s.io,scheduling.k8s.io,node.k8s.io,discovery.k8s.io,flowcontrol.apiserver.k8s.io,events.k8s.io,authentication.k8s.io,authorization.k8s.io'
+kind: ConfigMap
+metadata:
+  name: api-extension-core-resources
+  namespace: harikube
+---
+apiVersion: v1
+data:
+  laya-cache: /var/cache/laya
+  port: "8088"
+  provider: laya
+  server.mjs: |
+    import { createServer } from 'node:http';
+
+    const provider = (process.env.DECISION_MAKER_PROVIDER || 'mock').trim().toLowerCase();
+    const port = Number.parseInt(process.env.DECISION_MAKER_PORT || '8088', 10);
+
+    let layaInstancePromise;
+    let layaReady = provider !== 'laya';
+    let layaInitError = null;
+
+    const stopWords = new Set([
+      'a', 'an', 'and', 'are', 'as', 'at', 'be', 'because', 'but', 'by', 'for', 'from', 'have', 'i', 'if', 'in', 'is', 'it', 'may', 'no', 'not', 'of', 'on', 'or', 'our', 'so', 'still', 'that', 'the', 'their', 'them', 'there', 'they', 'this', 'to', 'two', 'was', 'we', 'were', 'which', 'who', 'why', 'will', 'with', 'would', 'you', 'your'
+    ]);
+
+    function normalizeWord(word) {
+      if (word.endsWith('ies') && word.length > 4) {
+        return `${word.slice(0, -3)}y`;
+      }
+      if (word.endsWith('es') && word.length > 4) {
+        return word.slice(0, -2);
+      }
+      if (word.endsWith('s') && word.length > 3) {
+        return word.slice(0, -1);
+      }
+      return word;
+    }
+
+    function normalizeText(value) {
+      if (value === null || value === undefined) {
+        return '';
+      }
+      if (typeof value === 'string') {
+        return value;
+      }
+      if (typeof value === 'number' || typeof value === 'boolean') {
+        return String(value);
+      }
+      if (Array.isArray(value)) {
+        return value.map(normalizeText).join(' ');
+      }
+      if (typeof value === 'object') {
+        return Object.entries(value)
+          .map(([key, entry]) => `${key} ${normalizeText(entry)}`)
+          .join(' ');
+      }
+      return String(value);
+    }
+
+    function tokenize(value) {
+      return normalizeText(value)
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, ' ')
+        .split(/\s+/)
+        .map(normalizeWord)
+        .filter((word) => word && !stopWords.has(word));
+    }
+
+    function keywordScore(tokenSet, text) {
+      const candidates = tokenize(text);
+      let score = 0;
+      for (const candidate of candidates) {
+        if (tokenSet.has(candidate)) {
+          score += 1;
+        }
+      }
+      return score;
+    }
+
+    function probabilityMap(scores) {
+      const entries = Object.entries(scores);
+      const total = entries.reduce((sum, [, value]) => sum + value, 0) || 1;
+      return Object.fromEntries(entries.map(([key, value]) => [key, Number((value / total).toFixed(4))]));
+    }
+
+    function mockSystemOne({ state, questions }) {
+      const stateTokens = tokenize(state);
+      const stateTokenSet = new Set(stateTokens);
+      const stateText = normalizeText(state).toLowerCase();
+      const answers = {};
+
+      for (const [name, question] of Object.entries(questions || {})) {
+        switch ((question.type || '').toLowerCase()) {
+          case 'choice': {
+            const criteria = question.criteria || {};
+            const scores = {};
+            for (const [option, description] of Object.entries(criteria)) {
+              const score = 1 + keywordScore(stateTokenSet, `${option} ${description}`);
+              scores[option] = score;
+            }
+            const probabilities = probabilityMap(scores);
+            const choice = Object.entries(probabilities).sort((left, right) => right[1] - left[1])[0]?.[0] || '';
+            answers[name] = { choice, probabilities };
+            break;
+          }
+          case 'score': {
+            const criteria = Array.isArray(question.criteria) ? question.criteria : [];
+            const rawWeights = criteria.map((label, index) => {
+              let weight = 1 + keywordScore(stateTokenSet, `${label}`);
+              if (stateText.includes(String(label).toLowerCase())) {
+                weight += index + 1;
+              }
+              return weight;
+            });
+            const total = rawWeights.reduce((sum, value) => sum + value, 0) || 1;
+            const distribution = rawWeights.map((value) => Number((value / total).toFixed(4)));
+            const score = Number(distribution.reduce((sum, value, index) => sum + value * index, 0).toFixed(4));
+            answers[name] = { score, distribution };
+            break;
+          }
+          case 'noul': {
+            const riskSignals = ['cancel', 'refund', 'dispute', 'chargeback', 'angry', 'urgent', 'critical'];
+            const signalCount = riskSignals.reduce((sum, signal) => sum + (stateText.includes(signal) ? 1 : 0), 0) + keywordScore(stateTokenSet, question.instructions || '');
+            answers[name] = { noul: signalCount > 0 ? 0.9 : 0.1 };
+            break;
+          }
+          default:
+            throw new Error(`unsupported question type for ${name}: ${question.type}`);
+        }
+      }
+
+      return {
+        answers,
+        usage: {
+          input_tokens: tokenize({ state, questions }).length,
+          provider,
+        },
+      };
+    }
+
+    async function loadLaya() {
+      if (!layaInstancePromise) {
+        layaInstancePromise = import('@receptron/laya').then(async ({ Laya }) => Laya.load({
+          cacheDir: process.env.LAYA_CACHE,
+          token: process.env.HF_TOKEN,
+          executionProviders: ['cpu'],
+          sessionOptions: { intraOpNumThreads: Number.parseInt(process.env.LAYA_THREADS || '2', 10) },
+        }));
+      }
+      return layaInstancePromise;
+    }
+
+    async function initializeProvider() {
+      if (provider !== 'laya') {
+        layaReady = true;
+        return;
+      }
+      try {
+        console.log('loading laya model')
+        await loadLaya();
+        layaReady = true;
+        console.log('laya model ready');
+      } catch (error) {
+        layaInitError = error instanceof Error ? error : new Error(String(error));
+        console.error('failed to initialize laya model', layaInitError);
+      }
+    }
+
+    async function systemOne(payload) {
+      if (!payload || typeof payload !== 'object') {
+        throw new Error('request body must be an object');
+      }
+      if (!payload.questions || typeof payload.questions !== 'object' || Object.keys(payload.questions).length === 0) {
+        throw new Error('questions are required');
+      }
+      if (provider === 'laya') {
+        if (layaInitError) {
+          throw new Error(`laya initialization failed: ${layaInitError.message}`);
+        }
+        if (!layaReady) {
+          throw new Error('laya model is still loading');
+        }
+        const laya = await loadLaya();
+        return laya.systemOne(payload.state, payload.questions);
+      }
+      return mockSystemOne(payload);
+    }
+
+    async function readJSON(req) {
+      const chunks = [];
+      for await (const chunk of req) {
+        chunks.push(chunk);
+      }
+      const raw = Buffer.concat(chunks).toString('utf8');
+      if (!raw.trim()) {
+        throw new Error('empty body');
+      }
+      return JSON.parse(raw);
+    }
+
+    function writeJSON(res, statusCode, body) {
+      const payload = JSON.stringify(body);
+      res.writeHead(statusCode, { 'content-type': 'application/json' });
+      res.end(payload);
+    }
+
+    const server = createServer(async (req, res) => {
+      if (req.method === 'GET' && req.url === '/healthz') {
+        if (provider === 'laya' && !layaReady) {
+          return writeJSON(res, layaInitError ? 500 : 503, {
+            ok: false,
+            provider,
+            ready: false,
+            error: layaInitError ? layaInitError.message : 'laya model is still loading',
+          });
+        }
+        return writeJSON(res, 200, { ok: true, provider, ready: true });
+      }
+      if (req.method === 'POST' && req.url === '/system-one') {
+        try {
+          const payload = await readJSON(req);
+          const result = await systemOne(payload);
+          return writeJSON(res, 200, result);
+        } catch (error) {
+          return writeJSON(res, 400, { error: error instanceof Error ? error.message : String(error) });
+        }
+      }
+      return writeJSON(res, 404, { error: 'not found' });
+    });
+
+    server.listen(port, '0.0.0.0', () => {
+      console.log(`decision-maker sidecar listening on ${port} using provider=${provider}`);
+      initializeProvider().catch((error) => {
+        layaInitError = error instanceof Error ? error : new Error(String(error));
+        console.error('unexpected decision-maker initialization failure', layaInitError);
+      });
+    });
+
+    const shutdown = async () => {
+      try {
+        if (layaInstancePromise) {
+          const laya = await layaInstancePromise;
+          if (laya && typeof laya.close === 'function') {
+            await laya.close();
+          }
+        }
+      } finally {
+        server.close(() => process.exit(0));
+      }
+    };
+
+    process.on('SIGTERM', shutdown);
+    process.on('SIGINT', shutdown);
+  timeout: 30s
+  url: http://127.0.0.1:8088/system-one
+kind: ConfigMap
+metadata:
+  name: api-extension-decision-maker
+  namespace: harikube
+---
+apiVersion: v1
+data:
+  harikube.url: aHR0cDovLzE3Mi4xNy4wLjE6MjM2OTE=
+kind: Secret
+metadata:
+  name: api-extension-harikube-connection
+  namespace: harikube
+type: Opaque
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: api-extension-decision-maker-cache
+  namespace: harikube
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: api-extension
+    control-plane: controller-manager
+  name: harikube
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.19.0
+  name: countresponses.api-extension.harikube.info
+spec:
+  group: api-extension.harikube.info
+  names:
+    kind: CountResponse
+    listKind: CountResponseList
+    plural: countresponses
+    singular: countresponse
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.count
+      name: Count
+      type: integer
+    name: v1
+    schema:
+      openAPIV3Schema:
+        description: CountResponse is the Schema for the countresponses API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the desired state of CountResponse
+            properties:
+              count:
+                format: int64
+                type: integer
+            required:
+            - count
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.19.0
+  name: transactionrequests.api-extension.harikube.info
+spec:
+  group: api-extension.harikube.info
+  names:
+    kind: TransactionRequest
+    listKind: TransactionRequestList
+    plural: transactionrequests
+    singular: transactionrequest
+  scope: Namespaced
+  versions:
+  - name: v1
+    schema:
+      openAPIV3Schema:
+        description: TransactionRequest is the Schema for the Transactions API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the desired state of Transaction
+            properties:
+              create:
+                items:
+                  format: byte
+                  type: string
+                type: array
+              delete:
+                items:
+                  format: byte
+                  type: string
+                type: array
+              update:
+                items:
+                  format: byte
+                  type: string
+                type: array
+            required:
+            - create
+            - delete
+            - update
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.19.0
+  name: transactionresponses.api-extension.harikube.info
+spec:
+  group: api-extension.harikube.info
+  names:
+    kind: TransactionResponse
+    listKind: TransactionResponseList
+    plural: transactionresponses
+    singular: transactionresponse
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.error
+      name: Error
+      type: string
+    name: v1
+    schema:
+      openAPIV3Schema:
+        description: TransactionResponse is the Schema for the Transactions API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the actual state of Transaction
+            properties:
+              error:
+                type: string
+            required:
+            - error
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources: {}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: api-extension
+  name: api-extension-controller-manager
+  namespace: harikube
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: api-extension
+  name: api-extension-leader-election-role
+  namespace: harikube
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+- apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: api-extension
+  name: api-extension-manager-role
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - get
+  - list
+  - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: api-extension-metrics-auth-role
+rules:
+- apiGroups:
+  - authentication.k8s.io
+  resources:
+  - tokenreviews
+  verbs:
+  - create
+- apiGroups:
+  - authorization.k8s.io
+  resources:
+  - subjectaccessreviews
+  verbs:
+  - create
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: api-extension-metrics-reader
+rules:
+- nonResourceURLs:
+  - /metrics
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: api-extension
+  name: api-extension-leader-election-rolebinding
+  namespace: harikube
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: api-extension-leader-election-role
+subjects:
+- kind: ServiceAccount
+  name: api-extension-controller-manager
+  namespace: harikube
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: api-extension
+  name: api-extension-manager-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: api-extension-manager-role
+subjects:
+- kind: ServiceAccount
+  name: api-extension-controller-manager
+  namespace: harikube
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: api-extension-metrics-auth-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: api-extension-metrics-auth-role
+subjects:
+- kind: ServiceAccount
+  name: api-extension-controller-manager
+  namespace: harikube
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: api-extension
+    control-plane: controller-manager
+  name: api-extension-controller-manager-metrics-service
+  namespace: harikube
+spec:
+  ports:
+  - name: https
+    port: 8443
+    protocol: TCP
+    targetPort: 8443
+  selector:
+    app.kubernetes.io/name: api-extension
+    control-plane: controller-manager
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: api-extension
+  name: api-extension-v1-api-extension
+  namespace: harikube
+spec:
+  ports:
+  - port: 443
+    protocol: TCP
+    targetPort: 7443
+  selector:
+    app.kubernetes.io/name: api-extension
+    control-plane: controller-manager
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: api-extension
+    control-plane: controller-manager
+  name: api-extension-controller-manager
+  namespace: harikube
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: api-extension
+      control-plane: controller-manager
+  template:
+    metadata:
+      annotations:
+        kubectl.kubernetes.io/default-container: manager
+      labels:
+        app.kubernetes.io/name: api-extension
+        control-plane: controller-manager
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: kubernetes.io/arch
+                operator: In
+                values:
+                - arm64
+                - amd64
+                - s390x
+                - ppc64le
+              - key: kubernetes.io/os
+                operator: In
+                values:
+                - linux
+      containers:
+      - args:
+        - --metrics-bind-address=:8443
+        - --leader-elect=false
+        - --health-probe-bind-address=:8081
+        - --harikube-skip-verify=false
+        - --core-resources=$(CORE_RESOURCES)
+        - --apiserver-port=:7443
+        - --apiserver-cert-file=/tmp/k8s-apiserver-server/serving-certs/tls.crt
+        - --apiserver-key-file=/tmp/k8s-apiserver-server/serving-certs/tls.key
+        - --harikube-urls=/tmp/harikube-connection/harikube.url
+        - --decision-maker-url=$(DECISION_MAKER_URL)
+        - --decision-maker-timeout=$(DECISION_MAKER_TIMEOUT)
+        command:
+        - /manager
+        env:
+        - name: CORE_RESOURCES
+          valueFrom:
+            configMapKeyRef:
+              key: resources
+              name: api-extension-core-resources
+        - name: DECISION_MAKER_URL
+          valueFrom:
+            configMapKeyRef:
+              key: url
+              name: api-extension-decision-maker
+        - name: DECISION_MAKER_TIMEOUT
+          valueFrom:
+            configMapKeyRef:
+              key: timeout
+              name: api-extension-decision-maker
+        image: harikube/api-extension:laya-f014d
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8081
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        name: manager
+        ports:
+        - containerPort: 7443
+          name: apiserver
+          protocol: TCP
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8081
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          limits:
+            cpu: 500m
+            memory: 128Mi
+          requests:
+            cpu: 10m
+            memory: 64Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+          runAsGroup: 65532
+          runAsNonRoot: true
+          runAsUser: 65532
+          seccompProfile:
+            type: RuntimeDefault
+        volumeMounts:
+        - mountPath: /tmp/k8s-apiserver-server/serving-certs
+          name: apiserver-certs
+          readOnly: true
+        - mountPath: /tmp/harikube-connection
+          name: harikube-connection
+          readOnly: true
+      - args:
+        - |
+          echo "decision-maker starting with provider=${DECISION_MAKER_PROVIDER}"
+          mkdir -p /tmp/decision-maker "${NPM_CONFIG_CACHE}" "${HOME}"
+          cp /opt/decision-maker/server.mjs /tmp/decision-maker/server.mjs
+          cd /tmp/decision-maker
+          if [ "${DECISION_MAKER_PROVIDER}" = "laya" ]; then
+            echo "installing @receptron/laya into /tmp/decision-maker"
+            npm init -y >/dev/null 2>&1
+            npm install --omit=dev @receptron/laya
+            echo "finished installing @receptron/laya"
+          fi
+          exec node /tmp/decision-maker/server.mjs
+        command:
+        - /bin/sh
+        - -ec
+        env:
+        - name: DECISION_MAKER_PROVIDER
+          valueFrom:
+            configMapKeyRef:
+              key: provider
+              name: api-extension-decision-maker
+        - name: DECISION_MAKER_PORT
+          valueFrom:
+            configMapKeyRef:
+              key: port
+              name: api-extension-decision-maker
+        - name: LAYA_CACHE
+          valueFrom:
+            configMapKeyRef:
+              key: laya-cache
+              name: api-extension-decision-maker
+        - name: HOME
+          value: /tmp/decision-maker/home
+        - name: NPM_CONFIG_CACHE
+          value: /var/cache/laya/.npm
+        - name: HF_TOKEN
+          valueFrom:
+            secretKeyRef:
+              key: hf-token
+              name: api-extension-decision-maker-secrets
+              optional: true
+        image: node:20-bookworm-slim
+        imagePullPolicy: IfNotPresent
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: decision-http
+          initialDelaySeconds: 10
+          periodSeconds: 20
+        name: decision-maker
+        ports:
+        - containerPort: 8088
+          name: decision-http
+          protocol: TCP
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: decision-http
+          initialDelaySeconds: 2
+          periodSeconds: 10
+        resources:
+          limits:
+            cpu: 2
+            memory: 4Gi
+          requests:
+            cpu: 250m
+            memory: 1Gi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: false
+          runAsGroup: 65532
+          runAsNonRoot: true
+          runAsUser: 65532
+          seccompProfile:
+            type: RuntimeDefault
+        startupProbe:
+          failureThreshold: 90
+          httpGet:
+            path: /healthz
+            port: decision-http
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        volumeMounts:
+        - mountPath: /opt/decision-maker/server.mjs
+          name: decision-maker-script
+          readOnly: true
+          subPath: server.mjs
+        - mountPath: /var/cache/laya
+          name: decision-maker-cache
+      securityContext:
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
+        runAsGroup: 65532
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      serviceAccountName: api-extension-controller-manager
+      terminationGracePeriodSeconds: 10
+      volumes:
+      - name: apiserver-certs
+        secret:
+          secretName: v1-api-extension-tls
+      - name: harikube-connection
+        secret:
+          secretName: api-extension-harikube-connection
+      - configMap:
+          items:
+          - key: server.mjs
+            path: server.mjs
+          name: api-extension-decision-maker
+        name: decision-maker-script
+      - name: decision-maker-cache
+        persistentVolumeClaim:
+          claimName: api-extension-decision-maker-cache
+---
+apiVersion: apiregistration.k8s.io/v1
+kind: APIService
+metadata:
+  annotations:
+    cert-manager.io/inject-ca-from: harikube/api-extension-v1-api-extension-cert
+  name: v1.apiserver.api-extension.harikube.info
+spec:
+  caBundle: ""
+  group: apiserver.api-extension.harikube.info
+  groupPriorityMinimum: 1000
+  service:
+    name: api-extension-v1-api-extension
+    namespace: harikube
+    port: 443
+  version: v1
+  versionPriority: 10
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: api-extension-v1-api-extension-cert
+  namespace: harikube
+spec:
+  commonName: api-extension-v1-api-extension.api-extension-system.svc
+  dnsNames:
+  - api-extension-v1-api-extension.harikube.svc
+  - api-extension-v1-api-extension.harikube.svc.cluster.local
+  issuerRef:
+    name: api-extension-v1-api-extension-ca
+  secretName: v1-api-extension-tls
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: api-extension-v1-api-extension-ca
+  namespace: harikube
+spec:
+  selfSigned: {}

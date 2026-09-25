@@ -48,7 +48,6 @@ jobs:
     - name: Generate bundle
       run: devbox run make package
       env:
-        DECISION_MAKER_PROVIDER: laya
         IMG: ${{ vars.REGISTRY }}/${{ vars.REPOSITORY }}/api-extension:${{ steps.extract_branch.outputs.branch }}
         TAG: ${{ steps.extract_branch.outputs.branch }}
         DECISION_MAKER_PROVIDER: laya
