@@ -3,6 +3,7 @@ package apiserver
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"go.yaml.in/yaml/v2"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	authorizationclientv1 "k8s.io/client-go/kubernetes/typed/authorization/v1"
 	"k8s.io/client-go/restmapper"
@@ -380,6 +382,145 @@ func TestTransactionCreateHandlerRejectsInvalidBody(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestTransactionCreateHandlerRejectsResourcesFailingValidation(t *testing.T) {
+	body := `apiVersion: apiserver.api-extension.harikube.info/v1
+kind: TransactionRequest
+metadata:
+  name: validation-failure
+spec:
+  create:
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: user-payment-AAA
+`
+
+	originalSAR := transactionSubjectAccessReview
+	originalGetResource := transactionGetResource
+	originalValidateAndDefault := transactionValidateAndDefault
+	originalCommit := transactionCommit
+	t.Cleanup(func() {
+		transactionSubjectAccessReview = originalSAR
+		transactionGetResource = originalGetResource
+		transactionValidateAndDefault = originalValidateAndDefault
+		transactionCommit = originalCommit
+	})
+
+	transactionSubjectAccessReview = func(_ context.Context, _ *authorizationclientv1.AuthorizationV1Client, _ *authorizationv1.ResourceAttributes, _ http.Header) (*authorizationv1.SubjectAccessReview, error) {
+		return &authorizationv1.SubjectAccessReview{Status: authorizationv1.SubjectAccessReviewStatus{Allowed: true}}, nil
+	}
+	transactionGetResource = func(_ schema.GroupVersionKind, _ *restmapper.DeferredDiscoveryRESTMapper) (*meta.RESTMapping, error) {
+		return &meta.RESTMapping{
+			Resource: schema.GroupVersionResource{Version: "v1", Resource: "configmaps"},
+			Scope:    meta.RESTScopeNamespace,
+		}, nil
+	}
+	transactionValidateAndDefault = func(_ context.Context, _ *authorizationclientv1.AuthorizationV1Client, _ *meta.RESTMapping, operation, namespace string, obj *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+		if operation != "create" {
+			t.Fatalf("operation = %q, want %q", operation, "create")
+		}
+		if namespace != "default" {
+			t.Fatalf("namespace = %q, want %q", namespace, "default")
+		}
+		if obj.GetName() != "user-payment-AAA" {
+			t.Fatalf("name = %q, want %q", obj.GetName(), "user-payment-AAA")
+		}
+
+		return nil, fmt.Errorf("validation failed")
+	}
+	transactionCommit = func(_ context.Context, _ *clientv3.Client, _, _ string, _ map[string][]byte) (*clientv3.TxnResponse, error) {
+		t.Fatal("transactionCommit should not be called")
+		return nil, nil
+	}
+
+	handler := getTransactionHandler(&authorizationclientv1.AuthorizationV1Client{}, &clientv3.Client{}, []string{""}, &restmapper.DeferredDiscoveryRESTMapper{})
+
+	req := httptest.NewRequest(http.MethodPost, "/apis/apiserver.api-extension.harikube.info/namespaces/default/transactionrequests", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/yaml")
+	rec := httptest.NewRecorder()
+
+	handler.CustomResource.CreateHandler("default", "", rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+	if !strings.Contains(rec.Body.String(), "validation failed") {
+		t.Fatalf("response body = %q, want validation error", rec.Body.String())
+	}
+}
+
+func TestTransactionResourceMapStoresDefaultedResource(t *testing.T) {
+	originalGetResource := transactionGetResource
+	originalValidateAndDefault := transactionValidateAndDefault
+	t.Cleanup(func() {
+		transactionGetResource = originalGetResource
+		transactionValidateAndDefault = originalValidateAndDefault
+	})
+
+	transactionGetResource = func(_ schema.GroupVersionKind, _ *restmapper.DeferredDiscoveryRESTMapper) (*meta.RESTMapping, error) {
+		return &meta.RESTMapping{
+			Resource: schema.GroupVersionResource{Version: "v1", Resource: "configmaps"},
+			Scope:    meta.RESTScopeNamespace,
+		}, nil
+	}
+
+	calls := 0
+	transactionValidateAndDefault = func(_ context.Context, _ *authorizationclientv1.AuthorizationV1Client, _ *meta.RESTMapping, operation, namespace string, obj *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+		calls++
+		if operation != "create" {
+			t.Fatalf("operation = %q, want %q", operation, "create")
+		}
+		if namespace != "default" {
+			t.Fatalf("namespace = %q, want %q", namespace, "default")
+		}
+
+		defaulted := obj.DeepCopy()
+		defaulted.SetNamespace(namespace)
+		defaulted.SetLabels(map[string]string{"managed-by": "apiserver"})
+
+		return defaulted, nil
+	}
+
+	resources := map[string][]byte{}
+	entry := []byte(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: user-payment-AAA
+`)
+
+	if err := transactionResourceMap(context.Background(), &authorizationclientv1.AuthorizationV1Client{}, resources, entry, "default", "create", map[string]bool{"": true}, &restmapper.DeferredDiscoveryRESTMapper{}); err != nil {
+		t.Fatalf("transactionResourceMap() error = %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("validation/defaulting calls = %d, want 1", calls)
+	}
+
+	value, ok := resources["/registry/configmaps/default/user-payment-AAA#create"]
+	if !ok {
+		t.Fatalf("resources missing key %q, got %v", "/registry/configmaps/default/user-payment-AAA#create", resources)
+	}
+
+	var resource map[string]interface{}
+	if err := yaml.Unmarshal(value, &resource); err != nil {
+		t.Fatalf("yaml.Unmarshal() error = %v", err)
+	}
+
+	metadata, ok := resource["metadata"].(map[interface{}]interface{})
+	if !ok {
+		t.Fatalf("metadata = %#v, want map", resource["metadata"])
+	}
+	if metadata["namespace"] != "default" {
+		t.Fatalf("metadata.namespace = %v, want %q", metadata["namespace"], "default")
+	}
+	labels, ok := metadata["labels"].(map[interface{}]interface{})
+	if !ok {
+		t.Fatalf("metadata.labels = %#v, want map", metadata["labels"])
+	}
+	if labels["managed-by"] != "apiserver" {
+		t.Fatalf("metadata.labels.managed-by = %v, want %q", labels["managed-by"], "apiserver")
 	}
 }
 

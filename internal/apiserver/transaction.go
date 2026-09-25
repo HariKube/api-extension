@@ -29,6 +29,7 @@ var (
 	transactionLogger              = logf.Log.WithName("api-extension.transaction")
 	transactionSubjectAccessReview = subjectAccessReview
 	transactionGetResource         = getResurce
+	transactionValidateAndDefault  = validateAndDefaultTransactionResource
 	transactionCommit              = func(ctx context.Context, client *clientv3.Client, namespace, name string, resources map[string][]byte) (*clientv3.TxnResponse, error) {
 		payloadBytes, err := buildTransactionCommitPayload(namespace, name, resources)
 		if err != nil {
@@ -208,21 +209,21 @@ func getTransactionHandler(authClient *authorizationclientv1.AuthorizationV1Clie
 				resources := map[string][]byte{}
 
 				for _, entry := range transaction.Create {
-					if err := transactionResourceMap(resources, entry, requestNamespace, "create", coreResourcesMap, mapper); err != nil {
+					if err := transactionResourceMap(ctx, authClient, resources, entry, requestNamespace, "create", coreResourcesMap, mapper); err != nil {
 						http.Error(w, err.Error(), http.StatusBadRequest)
 
 						return
 					}
 				}
 				for _, entry := range transaction.Update {
-					if err := transactionResourceMap(resources, entry, requestNamespace, "update", coreResourcesMap, mapper); err != nil {
+					if err := transactionResourceMap(ctx, authClient, resources, entry, requestNamespace, "update", coreResourcesMap, mapper); err != nil {
 						http.Error(w, err.Error(), http.StatusBadRequest)
 
 						return
 					}
 				}
 				for _, entry := range transaction.Delete {
-					if err := transactionResourceMap(resources, entry, requestNamespace, "delete", coreResourcesMap, mapper); err != nil {
+					if err := transactionResourceMap(ctx, authClient, resources, entry, requestNamespace, "delete", coreResourcesMap, mapper); err != nil {
 						http.Error(w, err.Error(), http.StatusBadRequest)
 
 						return
@@ -312,7 +313,7 @@ func getTransactionHandler(authClient *authorizationclientv1.AuthorizationV1Clie
 	}
 }
 
-func transactionResourceMap(resources map[string][]byte, entry []byte, requestNamespace, operation string, coreResourcesMap map[string]bool, mapper *restmapper.DeferredDiscoveryRESTMapper) error {
+func transactionResourceMap(ctx context.Context, authClient *authorizationclientv1.AuthorizationV1Client, resources map[string][]byte, entry []byte, requestNamespace, operation string, coreResourcesMap map[string]bool, mapper *restmapper.DeferredDiscoveryRESTMapper) error {
 	obj := &unstructured.Unstructured{}
 	if _, _, err := unstructuredDecoder.Decode(entry, nil, obj); err != nil {
 		return err
@@ -343,23 +344,29 @@ func transactionResourceMap(resources map[string][]byte, entry []byte, requestNa
 		return fmt.Errorf("resource not found for %s", gvk.String())
 	}
 
-	ns := requestNamespace
-	if metaEntry, ok := obj.Object["metadata"].(map[interface{}]interface{}); ok {
-		if metaMap, ok := metaEntry["namespace"]; ok {
-			if nsStr, ok := metaMap.(string); ok && nsStr != "" {
-				ns = nsStr
-			}
-		}
-	} else if metaEntry, ok := obj.Object["metadata"].(map[string]interface{}); ok {
-		if metaMap, ok := metaEntry["namespace"]; ok {
-			if nsStr, ok := metaMap.(string); ok && nsStr != "" {
-				ns = nsStr
-			}
-		}
+	ns := obj.GetNamespace()
+	if ns == "" {
+		ns = requestNamespace
 	}
-
 	if resource.Scope.Name() == meta.RESTScopeNameRoot {
 		ns = ""
+	} else if ns != "" && obj.GetNamespace() == "" {
+		obj.SetNamespace(ns)
+	}
+
+	if operation != "delete" {
+		obj, err = transactionValidateAndDefault(ctx, authClient, resource, operation, ns, obj)
+		if err != nil {
+			return fmt.Errorf("failed to validate %s resource: %w", operation, err)
+		}
+		if obj == nil {
+			return fmt.Errorf("failed to validate %s resource: empty response", operation)
+		}
+		if resource.Scope.Name() == meta.RESTScopeNameRoot {
+			ns = ""
+		} else if obj.GetNamespace() != "" {
+			ns = obj.GetNamespace()
+		}
 	}
 
 	prefix, err := etcdKeyForGroupVersionKind(gvk, ns, resource, coreResourcesMap)
@@ -367,20 +374,7 @@ func transactionResourceMap(resources map[string][]byte, entry []byte, requestNa
 		return fmt.Errorf("failed to build etcd key for %s: %w", gvk.String(), err)
 	}
 
-	resourceName, _ := obj.Object["metadata"].(map[interface{}]interface{})
-	var name string
-	if resourceName != nil {
-		if n, ok := resourceName["name"]; ok {
-			name, _ = n.(string)
-		}
-	}
-	if name == "" {
-		if resourceName, ok := obj.Object["metadata"].(map[string]interface{}); ok {
-			if n, ok := resourceName["name"]; ok {
-				name, _ = n.(string)
-			}
-		}
-	}
+	name := obj.GetName()
 	if name == "" {
 		return fmt.Errorf("missing metadata.name in %s resource", operation)
 	}
@@ -393,6 +387,79 @@ func transactionResourceMap(resources map[string][]byte, entry []byte, requestNa
 	resources[prefix+name+"#"+operation] = value
 
 	return nil
+}
+
+func validateAndDefaultTransactionResource(ctx context.Context, authClient *authorizationclientv1.AuthorizationV1Client, resource *meta.RESTMapping, operation, namespace string, obj *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+	if authClient == nil || authClient.RESTClient() == nil {
+		return obj, nil
+	}
+
+	path, err := transactionResourceAPIPath(resource, namespace, operation, obj.GetName())
+	if err != nil {
+		return nil, err
+	}
+
+	body, err := json.Marshal(obj.Object)
+	if err != nil {
+		return nil, fmt.Errorf("marshal resource: %w", err)
+	}
+
+	request := authClient.RESTClient().
+		Verb(strings.ToUpper(http.MethodPost)).
+		AbsPath(path).
+		Param("dryRun", "All").
+		Param("fieldValidation", "Strict").
+		Param("fieldManager", "api-extension-transaction").
+		SetHeader("Accept", "application/json").
+		SetHeader("Content-Type", "application/json")
+	if operation == "update" {
+		request = authClient.RESTClient().
+			Verb(strings.ToUpper(http.MethodPut)).
+			AbsPath(path).
+			Param("dryRun", "All").
+			Param("fieldValidation", "Strict").
+			Param("fieldManager", "api-extension-transaction").
+			SetHeader("Accept", "application/json").
+			SetHeader("Content-Type", "application/json")
+	}
+
+	responseBody, err := request.Body(body).DoRaw(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	validated := &unstructured.Unstructured{}
+	if err := json.Unmarshal(responseBody, &validated.Object); err != nil {
+		return nil, fmt.Errorf("decode validated resource: %w", err)
+	}
+
+	return validated, nil
+}
+
+func transactionResourceAPIPath(resource *meta.RESTMapping, namespace, operation, name string) (string, error) {
+	if resource == nil {
+		return "", fmt.Errorf("resource mapping is required")
+	}
+	if operation == "update" && name == "" {
+		return "", fmt.Errorf("missing metadata.name in %s resource", operation)
+	}
+
+	apiPath := "/api/" + resource.Resource.Version
+	if resource.Resource.Group != "" {
+		apiPath = "/apis/" + resource.Resource.Group + "/" + resource.Resource.Version
+	}
+	if resource.Scope.Name() != meta.RESTScopeNameRoot {
+		if namespace == "" {
+			return "", fmt.Errorf("missing namespace for %s resource", resource.Resource.Resource)
+		}
+		apiPath += "/namespaces/" + namespace
+	}
+	apiPath += "/" + resource.Resource.Resource
+	if operation == "update" {
+		apiPath += "/" + name
+	}
+
+	return apiPath, nil
 }
 
 func transactionAuthorizeAll(ctx context.Context, authClient *authorizationclientv1.AuthorizationV1Client, headers http.Header, transaction *transactionRequest, requestNamespace string, mapper *restmapper.DeferredDiscoveryRESTMapper) error {

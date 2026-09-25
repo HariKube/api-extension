@@ -8,102 +8,134 @@ spec:
     assert: 1m
     exec: 1m
   steps:
-  - name: Submit a transaction request
+  - name: Accept a transaction for a server-defaulted Deployment
     try:
-    - apply:
-        resource:
-          apiVersion: v1
-          kind: ConfigMap
-          metadata:
-            name: wallet-alice
-            namespace: chainsaw-transaction-test
-            labels:
-              stage: pending
-          data:
-            balance: "10"
-            state: open
-    - apply:
-        resource:
-          apiVersion: v1
-          kind: ConfigMap
-          metadata:
-            name: wallet-bob
-            namespace: chainsaw-transaction-test
-            labels:
-              stage: pending
-          data:
-            balance: "20"
-            state: open
-    - apply:
-        resource:
-          apiVersion: v1
-          kind: ConfigMap
-          metadata:
-            name: wallet-carol
-            namespace: chainsaw-transaction-test
-            labels:
-              stage: pending
-          data:
-            balance: "30"
-            state: open
     - script:
         content: |
-          alice_rv=$(kubectl get configmap wallet-alice -n chainsaw-transaction-test -o jsonpath='{.metadata.resourceVersion}')
-          bob_rv=$(kubectl get configmap wallet-bob -n chainsaw-transaction-test -o jsonpath='{.metadata.resourceVersion}')
-          carol_rv=$(kubectl get configmap wallet-carol -n chainsaw-transaction-test -o jsonpath='{.metadata.resourceVersion}')
-          txn_name="update-wallets-$(date +%s)"
+          set +e
+          response=$(cat <<'EOF' | kubectl create --dry-run=server -o json -f - 2>&1
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: wallet-processor
+            namespace: chainsaw-transaction-test
+          spec:
+            selector:
+              matchLabels:
+                app: wallet-processor
+            template:
+              metadata:
+                labels:
+                  app: wallet-processor
+              spec:
+                containers:
+                - name: worker
+                  image: nginx:1.27.5
+          EOF
+          )
+          status=$?
+          set -e
 
-          response=$(cat <<EOF | kubectl create --raw "/apis/apiserver.api-extension.harikube.info/v1/namespaces/chainsaw-transaction-test/transactionrequests" -f -
+          if [ "$status" -ne 0 ]; then
+            printf '%s\n' "$response"
+            exit "$status"
+          fi
+
+          RESPONSE="$response" python - <<'PY'
+          import json
+          import os
+
+          response = json.loads(os.environ["RESPONSE"])
+          assert response["kind"] == "Deployment", response
+          assert response["metadata"]["name"] == "wallet-processor", response
+          assert response["spec"]["strategy"]["type"] == "RollingUpdate", response
+          assert response["spec"]["revisionHistoryLimit"] == 10, response
+          template = response["spec"]["template"]
+          assert template["spec"]["dnsPolicy"] == "ClusterFirst", response
+          assert template["spec"]["restartPolicy"] == "Always", response
+          PY
+    - script:
+        content: |
+          set +e
+          response=$(cat <<'EOF' | kubectl create --raw "/apis/apiserver.api-extension.harikube.info/v1/namespaces/chainsaw-transaction-test/transactionrequests" -f - 2>&1
           apiVersion: apiserver.api-extension.harikube.info/v1
           kind: TransactionRequest
           metadata:
-            name: ${txn_name}
+            name: create-defaulted-deployment
             namespace: chainsaw-transaction-test
           spec:
-            update:
-            - apiVersion: v1
-              kind: ConfigMap
+            create:
+            - apiVersion: apps/v1
+              kind: Deployment
               metadata:
-                name: wallet-alice
+                name: wallet-processor
                 namespace: chainsaw-transaction-test
-                resourceVersion: "${alice_rv}"
-                labels:
-                  stage: committed
-              data:
-                balance: "15"
-                state: settled
-            - apiVersion: v1
-              kind: ConfigMap
-              metadata:
-                name: wallet-bob
-                namespace: chainsaw-transaction-test
-                resourceVersion: "${bob_rv}"
-                labels:
-                  stage: committed
-              data:
-                balance: "25"
-                state: settled
-            - apiVersion: v1
-              kind: ConfigMap
-              metadata:
-                name: wallet-carol
-                namespace: chainsaw-transaction-test
-                resourceVersion: "${carol_rv}"
-                labels:
-                  stage: committed
-              data:
-                balance: "35"
-                state: settled
+              spec:
+                selector:
+                  matchLabels:
+                    app: wallet-processor
+                template:
+                  metadata:
+                    labels:
+                      app: wallet-processor
+                  spec:
+                    containers:
+                    - name: worker
+                      image: nginx:1.27.5
           EOF
           )
+          status=$?
+          set -e
 
-          TXN_NAME="$txn_name" RESPONSE="$response" python - <<'PY'
+          if [ "$status" -ne 0 ]; then
+            printf '%s\n' "$response"
+            exit "$status"
+          fi
+
+          RESPONSE="$response" python - <<'PY'
           import json
           import os
 
           response = json.loads(os.environ["RESPONSE"])
           assert response["kind"] == "TransactionResponse", response
-          assert response["metadata"]["name"] == os.environ["TXN_NAME"], response
+          assert response["metadata"]["name"] == "create-defaulted-deployment", response
           assert response["metadata"]["namespace"] == "chainsaw-transaction-test", response
           assert response["metadata"]["resourceVersion"], response
           PY
+  - name: Reject a transaction for an invalid Deployment
+    try:
+    - script:
+        content: |
+          set +e
+          output=$(cat <<'EOF' | kubectl create --raw "/apis/apiserver.api-extension.harikube.info/v1/namespaces/chainsaw-transaction-test/transactionrequests" -f - 2>&1
+          apiVersion: apiserver.api-extension.harikube.info/v1
+          kind: TransactionRequest
+          metadata:
+            name: reject-invalid-deployment
+            namespace: chainsaw-transaction-test
+          spec:
+            create:
+            - apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                name: invalid-wallet-processor
+                namespace: chainsaw-transaction-test
+              spec:
+                selector:
+                  matchLabels:
+                    app: wallet-processor
+                template:
+                  metadata:
+                    labels:
+                      app: someone-else
+                  spec:
+                    containers:
+                    - name: worker
+                      image: nginx:1.27.5
+          EOF
+          )
+          status=$?
+          set -e
+
+          test "$status" -ne 0
+          printf '%s' "$output" | grep -Eqi 'selector.*template.*labels|template.*labels.*selector|Invalid value'
