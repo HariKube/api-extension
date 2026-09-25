@@ -2,9 +2,11 @@
 
 This repository contains a Kubernetes API extension to implement advanced data management.
 
+> Recommended CLI: install the [`kubectl-harikube` plugin](https://github.com/HariKube/krew-harikube) so you can use `kubectl harikube ...` instead of building raw aggregation API paths manually.
+
 ## Endpoints
 
-> Examples are based on `kubectl`, but any client can do the same.
+> Examples below now show `kubectl harikube ...` first, while keeping the original native and raw forms where they are useful for custom client implementations; install the plugin from [`HariKube/krew-harikube`](https://github.com/HariKube/krew-harikube) before trying the plugin commands.
 
 ### Count
 
@@ -13,27 +15,38 @@ This repository contains a Kubernetes API extension to implement advanced data m
 Returns the number of resources that match standard Kubernetes selectors without requiring the client to list and count objects manually. This is useful for quotas, reconciliation guards, dashboards, and application-level business rules.
 
 ```bash
+# Plugin examples
 # Cluster scope resource
-kubectl get counts --field-selector=apiVersion=cert-manager.io,kind=ClusterIssuer
-kubectl get counts --field-selector=apiVersion=cert-manager.io/v1,kind=ClusterIssuer
+kubectl harikube get counts --field-selector=apiVersion=cert-manager.io,kind=ClusterIssuer
+kubectl harikube get counts --field-selector=apiVersion=cert-manager.io/v1,kind=ClusterIssuer
 
 # Namespace scope resource
-kubectl get counts -A --field-selector=apiVersion=cert-manager.io,kind=Issuer
-kubectl get counts --namespace default --field-selector=apiVersion=cert-manager.io,kind=Issuer
+kubectl harikube get counts -A --field-selector=apiVersion=cert-manager.io,kind=Issuer
+kubectl harikube get counts --namespace default --field-selector=apiVersion=cert-manager.io,kind=Issuer
 
 # Label selector
-kubectl get counts --field-selector=apiVersion=cert-manager.io,kind=ClusterIssuer --selector=key=value
+kubectl harikube get counts --field-selector=apiVersion=cert-manager.io,kind=ClusterIssuer --selector=key=value
 
 # Field selector
-kubectl get counts --field-selector=apiVersion=cert-manager.io,kind=ClusterIssuer,.spec.field=value
+kubectl harikube get counts --field-selector=apiVersion=cert-manager.io,kind=ClusterIssuer,.spec.field=value
 
 # Full name call
-kubectl get counts.apiserver.api-extension.harikube.info --field-selector=apiVersion=cert-manager.io,kind=ClusterIssuer
+kubectl harikube get counts.apiserver.api-extension.harikube.info --field-selector=apiVersion=cert-manager.io,kind=ClusterIssuer
 
 # Get count only
+kubectl harikube get counts --field-selector=apiVersion=cert-manager.io/v1,kind=Issuer -o jsonpath='{.items[0].spec.count}'
+
+# Native aggregated API examples
+kubectl get counts --field-selector=apiVersion=cert-manager.io,kind=ClusterIssuer
+kubectl get counts --field-selector=apiVersion=cert-manager.io/v1,kind=ClusterIssuer
+kubectl get counts -A --field-selector=apiVersion=cert-manager.io,kind=Issuer
+kubectl get counts --namespace default --field-selector=apiVersion=cert-manager.io,kind=Issuer
+kubectl get counts --field-selector=apiVersion=cert-manager.io,kind=ClusterIssuer --selector=key=value
+kubectl get counts --field-selector=apiVersion=cert-manager.io,kind=ClusterIssuer,.spec.field=value
+kubectl get counts.apiserver.api-extension.harikube.info --field-selector=apiVersion=cert-manager.io,kind=ClusterIssuer
 kubectl get counts --field-selector=apiVersion=cert-manager.io/v1,kind=Issuer -o jsonpath='{.items[0].spec.count}'
 
-# Raw call
+# Raw client-style calls
 kubectl get --raw "/apis/apiserver.api-extension.harikube.info/v1/counts?fieldSelector=apiVersion=cert-manager.io,kind=ClusterIssuer&labelSelector=key=value"
 kubectl get --raw "/apis/apiserver.api-extension.harikube.info/v1/namespaces/default/counts?fieldSelector=apiVersion=cert-manager.io,kind=Issuer&labelSelector=key=value"
 ```
@@ -45,7 +58,10 @@ kubectl get --raw "/apis/apiserver.api-extension.harikube.info/v1/namespaces/def
 Executes multiple resource mutations as a single logical unit so applications can coordinate related creates, updates, and deletes together. This gives Kubernetes-backed workloads a safer primitive for multi-object state changes such as payments, provisioning, and workflow transitions.
 
 ```bash
-cat <<EOF | kubectl create --raw "/apis/apiserver.api-extension.harikube.info/namespaces/default/transactionrequests" -f -
+# Plugin form
+cat <<EOF | kubectl harikube create -f -
+# Raw API equivalent for custom clients:
+# cat <<EOF | kubectl create --raw "/apis/apiserver.api-extension.harikube.info/namespaces/default/transactionrequests" -f -
 apiVersion: apiserver.api-extension.harikube.info
 kind: TransactionRequest
 metadata:
@@ -83,7 +99,10 @@ EOF
 Runs a Laya-compatible `systemOne` decision request through a colocated sidecar and returns the model answers as a Kubernetes-style response object. This is useful for ticket routing, urgency scoring, fraud/risk checks, and other low-latency application decisions that can be expressed as structured state plus typed questions.
 
 ```bash
-cat <<EOF | kubectl create --raw "/apis/apiserver.api-extension.harikube.info/v1/namespaces/default/decisionrequests" -f -
+# Plugin form
+cat <<EOF | kubectl harikube create -f -
+# Raw API equivalent for custom clients:
+# cat <<EOF | kubectl create --raw "/apis/apiserver.api-extension.harikube.info/v1/namespaces/default/decisionrequests" -f -
 apiVersion: apiserver.api-extension.harikube.info/v1
 kind: DecisionRequest
 metadata:
@@ -175,7 +194,10 @@ Proposed endpoints should follow the same Kubernetes-friendly pattern: standard 
 Checks whether at least one object matches the target criteria, allowing clients to make fast presence checks without fetching full lists. This is useful for idempotency checks, conditional flows, and readiness logic.
 
 ```bash
-cat <<EOF | kubectl create --raw "/apis/apiserver.api-extension.harikube.info/namespaces/default/existsrequests" -f -
+# Plugin form
+cat <<EOF | kubectl harikube create -f -
+# Raw API equivalent for custom clients:
+# cat <<EOF | kubectl create --raw "/apis/apiserver.api-extension.harikube.info/namespaces/default/existsrequests" -f -
 apiVersion: apiserver.api-extension.harikube.info
 kind: ExistsRequest
 metadata:
@@ -193,6 +215,7 @@ spec:
         app: payments
 EOF
 
+kubectl harikube get existsrequests wallet-AAA -n default -o jsonpath='{.status.exists}'
 kubectl get existsrequests wallet-AAA -n default -o jsonpath='{.status.exists}'
 ```
 
@@ -201,7 +224,10 @@ kubectl get existsrequests wallet-AAA -n default -o jsonpath='{.status.exists}'
 Provides a general read API for application-style lookups over Kubernetes resources. It should be the main endpoint for combining native label selectors, native field selectors, Kiine-specific expressions, projection, ordering, pagination, grouping, count-style queries, distinct queries, and future query operators in a single structured request.
 
 ```bash
-cat <<EOF | kubectl create --raw "/apis/apiserver.api-extension.harikube.info/namespaces/default/queryrequests" -f -
+# Plugin form
+cat <<EOF | kubectl harikube create -f -
+# Raw API equivalent for custom clients:
+# cat <<EOF | kubectl create --raw "/apis/apiserver.api-extension.harikube.info/namespaces/default/queryrequests" -f -
 apiVersion: apiserver.api-extension.harikube.info
 kind: QueryRequest
 metadata:
@@ -240,7 +266,10 @@ EOF
 Computes database-style aggregate functions such as `sum`, `min`, `max`, `avg`, and grouped counts over Kubernetes resources. This helps applications build metrics, quotas, reporting, and reconciliation decisions directly from cluster data.
 
 ```bash
-cat <<EOF | kubectl create --raw "/apis/apiserver.api-extension.harikube.info/namespaces/billing/aggregaterequests" -f -
+# Plugin form
+cat <<EOF | kubectl harikube create -f -
+# Raw API equivalent for custom clients:
+# cat <<EOF | kubectl create --raw "/apis/apiserver.api-extension.harikube.info/namespaces/billing/aggregaterequests" -f -
 apiVersion: apiserver.api-extension.harikube.info
 kind: AggregateRequest
 metadata:
@@ -259,7 +288,10 @@ spec:
     path: .status.readyReplicas
 EOF
 
-cat <<EOF | kubectl create --raw "/apis/apiserver.api-extension.harikube.info/aggregaterequests" -f -
+# Plugin form
+cat <<EOF | kubectl harikube create -f -
+# Raw API equivalent for custom clients:
+# cat <<EOF | kubectl create --raw "/apis/apiserver.api-extension.harikube.info/aggregaterequests" -f -
 apiVersion: apiserver.api-extension.harikube.info
 kind: AggregateRequest
 metadata:
@@ -280,7 +312,10 @@ EOF
 Provides full-text indexing and search over projected Kubernetes resource fields such as titles, descriptions, annotations, and tags. Following the aggregation-layer pattern from the microservice blog post, the API server can maintain a dedicated metadata index, return scored matches plus highlights, and optionally feed the matched object references back into `Query` for richer structured filtering.
 
 ```bash
-cat <<EOF | kubectl create --raw "/apis/apiserver.api-extension.harikube.info/namespaces/default/textsearchrequests" -f -
+# Plugin form
+cat <<EOF | kubectl harikube create -f -
+# Raw API equivalent for custom clients:
+# cat <<EOF | kubectl create --raw "/apis/apiserver.api-extension.harikube.info/namespaces/default/textsearchrequests" -f -
 apiVersion: apiserver.api-extension.harikube.info
 kind: TextSearchRequest
 metadata:
@@ -313,6 +348,7 @@ spec:
   limit: 20
 EOF
 
+kubectl harikube get textsearchrequests tasks-about-payments -n default -o jsonpath='{.status.hits[*].object.metadata.name}'
 kubectl get textsearchrequests tasks-about-payments -n default -o jsonpath='{.status.hits[*].object.metadata.name}'
 ```
 
@@ -321,7 +357,10 @@ kubectl get textsearchrequests tasks-about-payments -n default -o jsonpath='{.st
 Returns the unique values for a projected field across matching resources. This is useful for discovering active tenants, regions, labels, node names, or any other deduplicated application dimension stored in Kubernetes objects.
 
 ```bash
-cat <<EOF | kubectl create --raw "/apis/apiserver.api-extension.harikube.info/distinctrequests" -f -
+# Plugin form
+cat <<EOF | kubectl harikube create -f -
+# Raw API equivalent for custom clients:
+# cat <<EOF | kubectl create --raw "/apis/apiserver.api-extension.harikube.info/distinctrequests" -f -
 apiVersion: apiserver.api-extension.harikube.info
 kind: DistinctRequest
 metadata:
@@ -334,7 +373,10 @@ spec:
     path: .spec.nodeName
 EOF
 
-cat <<EOF | kubectl create --raw "/apis/apiserver.api-extension.harikube.info/namespaces/billing/distinctrequests" -f -
+# Plugin form
+cat <<EOF | kubectl harikube create -f -
+# Raw API equivalent for custom clients:
+# cat <<EOF | kubectl create --raw "/apis/apiserver.api-extension.harikube.info/namespaces/billing/distinctrequests" -f -
 apiVersion: apiserver.api-extension.harikube.info
 kind: DistinctRequest
 metadata:
@@ -354,7 +396,10 @@ EOF
 Fetches a resource directly by Kubernetes UID, which is useful for event correlation, idempotency records, audit trails, and application workflows that store stable object identity rather than mutable names.
 
 ```bash
-cat <<EOF | kubectl create --raw "/apis/apiserver.api-extension.harikube.info/namespaces/default/uidrequests" -f -
+# Plugin form
+cat <<EOF | kubectl harikube create -f -
+# Raw API equivalent for custom clients:
+# cat <<EOF | kubectl create --raw "/apis/apiserver.api-extension.harikube.info/namespaces/default/uidrequests" -f -
 apiVersion: apiserver.api-extension.harikube.info
 kind: UIDRequest
 metadata:
@@ -373,7 +418,10 @@ EOF
 Returns all resources owned by a given parent object using Kubernetes `ownerReferences`. This is useful for garbage-collection analysis, topology inspection, debugging controllers, and application workflows that need to enumerate everything created under one logical owner.
 
 ```bash
-cat <<EOF | kubectl create --raw "/apis/apiserver.api-extension.harikube.info/namespaces/default/ownedrequests" -f -
+# Plugin form
+cat <<EOF | kubectl harikube create -f -
+# Raw API equivalent for custom clients:
+# cat <<EOF | kubectl create --raw "/apis/apiserver.api-extension.harikube.info/namespaces/default/ownedrequests" -f -
 apiVersion: apiserver.api-extension.harikube.info
 kind: OwnedRequest
 metadata:
@@ -394,7 +442,10 @@ EOF
 Finds resources whose `ownerReferences` match one or more owners, making ownership a first-class query primitive. This is useful when applications want to search dependents by owner UID, owner kind, or owner name across namespaces and resource types.
 
 ```bash
-cat <<EOF | kubectl create --raw "/apis/apiserver.api-extension.harikube.info/findbyownerrequests" -f -
+# Plugin form
+cat <<EOF | kubectl harikube create -f -
+# Raw API equivalent for custom clients:
+# cat <<EOF | kubectl create --raw "/apis/apiserver.api-extension.harikube.info/findbyownerrequests" -f -
 apiVersion: apiserver.api-extension.harikube.info
 kind: FindByOwnerRequest
 metadata:
@@ -422,7 +473,10 @@ EOF
 Creates a resource when it does not exist and updates it when it already exists, giving clients a single idempotent write primitive. This is useful for profiles, ledgers, checkpoints, and any application state that should converge without separate read-before-write logic.
 
 ```bash
-cat <<EOF | kubectl create --raw "/apis/apiserver.api-extension.harikube.info/namespaces/default/upsertrequests" -f -
+# Plugin form
+cat <<EOF | kubectl harikube create -f -
+# Raw API equivalent for custom clients:
+# cat <<EOF | kubectl create --raw "/apis/apiserver.api-extension.harikube.info/namespaces/default/upsertrequests" -f -
 apiVersion: apiserver.api-extension.harikube.info
 kind: UpsertRequest
 metadata:
@@ -447,7 +501,10 @@ EOF
 Applies an update only when the target resource still matches an expected value, providing optimistic concurrency control for application data. This helps prevent lost updates and is especially useful for balances, state machines, counters, and workflow transitions.
 
 ```bash
-cat <<EOF | kubectl create --raw "/apis/apiserver.api-extension.harikube.info/namespaces/default/compareandsetrequests" -f -
+# Plugin form
+cat <<EOF | kubectl harikube create -f -
+# Raw API equivalent for custom clients:
+# cat <<EOF | kubectl create --raw "/apis/apiserver.api-extension.harikube.info/namespaces/default/compareandsetrequests" -f -
 apiVersion: apiserver.api-extension.harikube.info
 kind: CompareAndSetRequest
 metadata:
@@ -473,7 +530,10 @@ EOF
 Executes multiple operations in one request to reduce round trips and coordinate bulk changes. Compared with `Transaction`, this endpoint is better positioned as a throughput-oriented primitive for bulk processing, onboarding, cleanup, and maintenance tasks.
 
 ```bash
-cat <<EOF | kubectl create --raw "/apis/apiserver.api-extension.harikube.info/namespaces/default/batchrequests" -f -
+# Plugin form
+cat <<EOF | kubectl harikube create -f -
+# Raw API equivalent for custom clients:
+# cat <<EOF | kubectl create --raw "/apis/apiserver.api-extension.harikube.info/namespaces/default/batchrequests" -f -
 apiVersion: apiserver.api-extension.harikube.info
 kind: BatchRequest
 metadata:
@@ -502,7 +562,10 @@ EOF
 Reserves a unique logical key with optional expiration so distributed applications can safely claim identifiers before committing a larger workflow. This is useful for usernames, invoice numbers, seat allocation, idempotency keys, and short-lived locks.
 
 ```bash
-cat <<EOF | kubectl create --raw "/apis/apiserver.api-extension.harikube.info/namespaces/default/reservations" -f -
+# Plugin form
+cat <<EOF | kubectl harikube create -f -
+# Raw API equivalent for custom clients:
+# cat <<EOF | kubectl create --raw "/apis/apiserver.api-extension.harikube.info/namespaces/default/reservations" -f -
 apiVersion: apiserver.api-extension.harikube.info
 kind: Reservation
 metadata:
