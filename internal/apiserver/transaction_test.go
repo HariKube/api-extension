@@ -2,10 +2,13 @@
 package apiserver
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -18,6 +21,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	authorizationclientv1 "k8s.io/client-go/kubernetes/typed/authorization/v1"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/restmapper"
 )
 
@@ -521,6 +525,95 @@ metadata:
 	}
 	if labels["managed-by"] != "apiserver" {
 		t.Fatalf("metadata.labels.managed-by = %v, want %q", labels["managed-by"], "apiserver")
+	}
+}
+
+func TestValidateAndDefaultTransactionResourceUsesTargetResourcePath(t *testing.T) {
+	var requestMethod string
+	var requestPath string
+	var requestQuery url.Values
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestMethod = r.Method
+		requestPath = r.URL.Path
+		requestQuery = r.URL.Query()
+
+		if got := r.Header.Get("Accept"); got != "application/json" {
+			t.Fatalf("Accept header = %q, want %q", got, "application/json")
+		}
+		if got := r.Header.Get("Content-Type"); got != "application/json" {
+			t.Fatalf("Content-Type header = %q, want %q", got, "application/json")
+		}
+
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("io.ReadAll() error = %v", err)
+		}
+		if !bytes.Contains(body, []byte(`"kind":"Deployment"`)) {
+			t.Fatalf("request body = %s, want deployment JSON", body)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"apiVersion":"apps/v1","kind":"Deployment","metadata":{"name":"wallet-processor","namespace":"default"},"spec":{"revisionHistoryLimit":10}}`))
+	}))
+	defer server.Close()
+
+	authClient, err := authorizationclientv1.NewForConfig(&rest.Config{Host: server.URL})
+	if err != nil {
+		t.Fatalf("authorizationclientv1.NewForConfig() error = %v", err)
+	}
+
+	resource := &meta.RESTMapping{
+		Resource: schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"},
+		Scope:    meta.RESTScopeNamespace,
+	}
+	obj := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "apps/v1",
+		"kind":       "Deployment",
+		"metadata": map[string]interface{}{
+			"name": "wallet-processor",
+		},
+		"spec": map[string]interface{}{
+			"selector": map[string]interface{}{
+				"matchLabels": map[string]interface{}{"app": "wallet-processor"},
+			},
+			"template": map[string]interface{}{
+				"metadata": map[string]interface{}{
+					"labels": map[string]interface{}{"app": "wallet-processor"},
+				},
+				"spec": map[string]interface{}{
+					"containers": []interface{}{
+						map[string]interface{}{"name": "worker", "image": "nginx:1.27.5"},
+					},
+				},
+			},
+		},
+	}}
+
+	validated, err := validateAndDefaultTransactionResource(context.Background(), authClient, resource, transactionOperationCreate, "default", obj)
+	if err != nil {
+		t.Fatalf("validateAndDefaultTransactionResource() error = %v", err)
+	}
+	if requestMethod != http.MethodPost {
+		t.Fatalf("request method = %q, want %q", requestMethod, http.MethodPost)
+	}
+	if requestPath != "/apis/apps/v1/namespaces/default/deployments" {
+		t.Fatalf("request path = %q, want %q", requestPath, "/apis/apps/v1/namespaces/default/deployments")
+	}
+	if requestQuery.Get("dryRun") != "All" {
+		t.Fatalf("dryRun = %q, want %q", requestQuery.Get("dryRun"), "All")
+	}
+	if requestQuery.Get("fieldValidation") != "Strict" {
+		t.Fatalf("fieldValidation = %q, want %q", requestQuery.Get("fieldValidation"), "Strict")
+	}
+	if requestQuery.Get("fieldManager") != transactionValidationFieldManager {
+		t.Fatalf("fieldManager = %q, want %q", requestQuery.Get("fieldManager"), transactionValidationFieldManager)
+	}
+	if validated.GetNamespace() != "default" {
+		t.Fatalf("validated namespace = %q, want %q", validated.GetNamespace(), "default")
+	}
+	if got := validated.Object["spec"].(map[string]interface{})["revisionHistoryLimit"]; got != float64(10) {
+		t.Fatalf("revisionHistoryLimit = %v, want %v", got, float64(10))
 	}
 }
 

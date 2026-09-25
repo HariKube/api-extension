@@ -1,11 +1,14 @@
 package apiserver
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -21,8 +24,16 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	kjson "k8s.io/apimachinery/pkg/runtime/serializer/json"
 	authorizationclientv1 "k8s.io/client-go/kubernetes/typed/authorization/v1"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/restmapper"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+)
+
+const (
+	transactionOperationCreate        = "create"
+	transactionOperationUpdate        = "update"
+	transactionOperationDelete        = "delete"
+	transactionValidationFieldManager = "api-extension-transaction"
 )
 
 var (
@@ -161,7 +172,7 @@ func getTransactionHandler(authClient *authorizationclientv1.AuthorizationV1Clie
 			SingularName: "transactionrequest",
 			Namespaced:   true,
 			Kind:         "TransactionRequest",
-			Verbs:        []string{"create"},
+			Verbs:        []string{transactionOperationCreate},
 		},
 		CustomResource: &kaf.CustomResource{
 			CreateHandler: func(namespace, name string, w http.ResponseWriter, r *http.Request) {
@@ -209,21 +220,21 @@ func getTransactionHandler(authClient *authorizationclientv1.AuthorizationV1Clie
 				resources := map[string][]byte{}
 
 				for _, entry := range transaction.Create {
-					if err := transactionResourceMap(ctx, authClient, resources, entry, requestNamespace, "create", coreResourcesMap, mapper); err != nil {
+					if err := transactionResourceMap(ctx, authClient, resources, entry, requestNamespace, transactionOperationCreate, coreResourcesMap, mapper); err != nil {
 						http.Error(w, err.Error(), http.StatusBadRequest)
 
 						return
 					}
 				}
 				for _, entry := range transaction.Update {
-					if err := transactionResourceMap(ctx, authClient, resources, entry, requestNamespace, "update", coreResourcesMap, mapper); err != nil {
+					if err := transactionResourceMap(ctx, authClient, resources, entry, requestNamespace, transactionOperationUpdate, coreResourcesMap, mapper); err != nil {
 						http.Error(w, err.Error(), http.StatusBadRequest)
 
 						return
 					}
 				}
 				for _, entry := range transaction.Delete {
-					if err := transactionResourceMap(ctx, authClient, resources, entry, requestNamespace, "delete", coreResourcesMap, mapper); err != nil {
+					if err := transactionResourceMap(ctx, authClient, resources, entry, requestNamespace, transactionOperationDelete, coreResourcesMap, mapper); err != nil {
 						http.Error(w, err.Error(), http.StatusBadRequest)
 
 						return
@@ -354,7 +365,7 @@ func transactionResourceMap(ctx context.Context, authClient *authorizationclient
 		obj.SetNamespace(ns)
 	}
 
-	if operation != "delete" {
+	if operation != transactionOperationDelete {
 		obj, err = transactionValidateAndDefault(ctx, authClient, resource, operation, ns, obj)
 		if err != nil {
 			return fmt.Errorf("failed to validate %s resource: %w", operation, err)
@@ -404,26 +415,12 @@ func validateAndDefaultTransactionResource(ctx context.Context, authClient *auth
 		return nil, fmt.Errorf("marshal resource: %w", err)
 	}
 
-	request := authClient.RESTClient().
-		Verb(strings.ToUpper(http.MethodPost)).
-		AbsPath(path).
-		Param("dryRun", "All").
-		Param("fieldValidation", "Strict").
-		Param("fieldManager", "api-extension-transaction").
-		SetHeader("Accept", "application/json").
-		SetHeader("Content-Type", "application/json")
-	if operation == "update" {
-		request = authClient.RESTClient().
-			Verb(strings.ToUpper(http.MethodPut)).
-			AbsPath(path).
-			Param("dryRun", "All").
-			Param("fieldValidation", "Strict").
-			Param("fieldManager", "api-extension-transaction").
-			SetHeader("Accept", "application/json").
-			SetHeader("Content-Type", "application/json")
+	method := http.MethodPost
+	if operation == transactionOperationUpdate {
+		method = http.MethodPut
 	}
 
-	responseBody, err := request.Body(body).DoRaw(ctx)
+	responseBody, err := executeTransactionValidationRequest(ctx, authClient, method, path, body)
 	if err != nil {
 		return nil, err
 	}
@@ -436,11 +433,64 @@ func validateAndDefaultTransactionResource(ctx context.Context, authClient *auth
 	return validated, nil
 }
 
+func executeTransactionValidationRequest(ctx context.Context, authClient *authorizationclientv1.AuthorizationV1Client, method, path string, body []byte) ([]byte, error) {
+	restClient, ok := authClient.RESTClient().(*rest.RESTClient)
+	if !ok {
+		return nil, fmt.Errorf("unsupported REST client %T", authClient.RESTClient())
+	}
+
+	requestURL := *restClient.Get().URL()
+	requestURL.Path = path
+	requestURL.RawQuery = url.Values{
+		"dryRun":          []string{"All"},
+		"fieldValidation": []string{"Strict"},
+		"fieldManager":    []string{transactionValidationFieldManager},
+	}.Encode()
+
+	httpClient := restClient.Client
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+
+	request, err := http.NewRequestWithContext(ctx, method, requestURL.String(), bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Content-Type", "application/json")
+
+	response, err := httpClient.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = response.Body.Close()
+	}()
+
+	responseBody, err := io.ReadAll(response.Body)
+	if err != nil {
+		return nil, err
+	}
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		var status metav1.Status
+		if err := json.Unmarshal(responseBody, &status); err == nil && status.Message != "" {
+			return nil, errors.New(status.Message)
+		}
+		if message := strings.TrimSpace(string(responseBody)); message != "" {
+			return nil, errors.New(message)
+		}
+
+		return nil, fmt.Errorf("validation request failed: %s", response.Status)
+	}
+
+	return responseBody, nil
+}
+
 func transactionResourceAPIPath(resource *meta.RESTMapping, namespace, operation, name string) (string, error) {
 	if resource == nil {
 		return "", fmt.Errorf("resource mapping is required")
 	}
-	if operation == "update" && name == "" {
+	if operation == transactionOperationUpdate && name == "" {
 		return "", fmt.Errorf("missing metadata.name in %s resource", operation)
 	}
 
@@ -455,7 +505,7 @@ func transactionResourceAPIPath(resource *meta.RESTMapping, namespace, operation
 		apiPath += "/namespaces/" + namespace
 	}
 	apiPath += "/" + resource.Resource.Resource
-	if operation == "update" {
+	if operation == transactionOperationUpdate {
 		apiPath += "/" + name
 	}
 
@@ -476,9 +526,9 @@ func transactionAuthorizeAll(ctx context.Context, authClient *authorizationclien
 		items [][]byte
 		verb  string
 	}{
-		{items: transaction.Create, verb: "create"},
-		{items: transaction.Update, verb: "update"},
-		{items: transaction.Delete, verb: "delete"},
+		{items: transaction.Create, verb: transactionOperationCreate},
+		{items: transaction.Update, verb: transactionOperationUpdate},
+		{items: transaction.Delete, verb: transactionOperationDelete},
 	}
 
 	for _, group := range entries {

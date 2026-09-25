@@ -8,6 +8,63 @@ spec:
     assert: 1m
     exec: 1m
   steps:
+  - name: Grant namespaced validation permissions
+    try:
+    - script:
+        content: |
+          cat <<'EOF' | kubectl apply -f -
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: Role
+          metadata:
+            name: transaction-validation
+            namespace: chainsaw-transaction-test
+          rules:
+          - apiGroups:
+            - apps
+            resources:
+            - deployments
+            verbs:
+            - create
+            - update
+          - apiGroups:
+            - cert-manager.io
+            resources:
+            - certificates
+            verbs:
+            - create
+            - update
+          ---
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: RoleBinding
+          metadata:
+            name: transaction-validation
+            namespace: chainsaw-transaction-test
+          roleRef:
+            apiGroup: rbac.authorization.k8s.io
+            kind: Role
+            name: transaction-validation
+          subjects:
+          - kind: ServiceAccount
+            name: api-extension-controller-manager
+            namespace: harikube
+          EOF
+
+          for _ in $(seq 1 30); do
+            if kubectl auth can-i \
+              --as=system:serviceaccount:harikube:api-extension-controller-manager \
+              create deployments.apps \
+              -n chainsaw-transaction-test >/dev/null 2>&1 && \
+              kubectl auth can-i \
+              --as=system:serviceaccount:harikube:api-extension-controller-manager \
+              create certificates.cert-manager.io \
+              -n chainsaw-transaction-test >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 1
+          done
+
+          echo "timed out waiting for transaction validation RBAC to propagate" >&2
+          exit 1
   - name: Accept a transaction for a server-defaulted Deployment
     try:
     - script:
@@ -56,12 +113,13 @@ spec:
           PY
     - script:
         content: |
+          txn_name="create-defaulted-deployment-$(date +%s%N)"
           set +e
-          response=$(cat <<'EOF' | kubectl create --raw "/apis/apiserver.api-extension.harikube.info/v1/namespaces/chainsaw-transaction-test/transactionrequests" -f - 2>&1
+          response=$(cat <<EOF | kubectl create --raw "/apis/apiserver.api-extension.harikube.info/v1/namespaces/chainsaw-transaction-test/transactionrequests" -f - 2>&1
           apiVersion: apiserver.api-extension.harikube.info/v1
           kind: TransactionRequest
           metadata:
-            name: create-defaulted-deployment
+            name: ${txn_name}
             namespace: chainsaw-transaction-test
           spec:
             create:
@@ -92,13 +150,13 @@ spec:
             exit "$status"
           fi
 
-          RESPONSE="$response" python - <<'PY'
+          TXN_NAME="$txn_name" RESPONSE="$response" python - <<'PY'
           import json
           import os
 
           response = json.loads(os.environ["RESPONSE"])
           assert response["kind"] == "TransactionResponse", response
-          assert response["metadata"]["name"] == "create-defaulted-deployment", response
+          assert response["metadata"]["name"] == os.environ["TXN_NAME"], response
           assert response["metadata"]["namespace"] == "chainsaw-transaction-test", response
           assert response["metadata"]["resourceVersion"], response
           PY
@@ -107,7 +165,7 @@ spec:
     - script:
         content: |
           set +e
-          output=$(cat <<'EOF' | kubectl create --raw "/apis/apiserver.api-extension.harikube.info/v1/namespaces/chainsaw-transaction-test/transactionrequests" -f - 2>&1
+          output=$(cat <<'EOF' | kubectl create --raw "/apis/apiserver.api-extension.harikube.info/v1/namespaces/chainsaw-transaction-test/transactionrequests" -f - -v=8 2>&1
           apiVersion: apiserver.api-extension.harikube.info/v1
           kind: TransactionRequest
           metadata:
@@ -139,3 +197,127 @@ spec:
 
           test "$status" -ne 0
           printf '%s' "$output" | grep -Eqi 'selector.*template.*labels|template.*labels.*selector|Invalid value'
+  - name: Accept a transaction for a webhook-validated Certificate
+    try:
+    - script:
+        content: |
+          cat <<'EOF' | kubectl apply -f -
+          apiVersion: cert-manager.io/v1
+          kind: Issuer
+          metadata:
+            name: wallet-selfsigned
+            namespace: chainsaw-transaction-test
+          spec:
+            selfSigned: {}
+          EOF
+    - script:
+        content: |
+          set +e
+          response=$(cat <<'EOF' | kubectl create --dry-run=server -o json -f - 2>&1
+          apiVersion: cert-manager.io/v1
+          kind: Certificate
+          metadata:
+            name: wallet-tls
+            namespace: chainsaw-transaction-test
+          spec:
+            secretName: wallet-tls
+            dnsNames:
+            - wallet.example.com
+            issuerRef:
+              name: wallet-selfsigned
+          EOF
+          )
+          status=$?
+          set -e
+
+          if [ "$status" -ne 0 ]; then
+            printf '%s\n' "$response"
+            exit "$status"
+          fi
+
+          RESPONSE="$response" python - <<'PY'
+          import json
+          import os
+
+          response = json.loads(os.environ["RESPONSE"])
+          assert response["kind"] == "Certificate", response
+          assert response["metadata"]["name"] == "wallet-tls", response
+          issuer_ref = response["spec"]["issuerRef"]
+          assert issuer_ref["name"] == "wallet-selfsigned", response
+          PY
+    - script:
+        content: |
+          txn_name="create-defaulted-certificate-$(date +%s%N)"
+          set +e
+          response=$(cat <<EOF | kubectl create --raw "/apis/apiserver.api-extension.harikube.info/v1/namespaces/chainsaw-transaction-test/transactionrequests" -f - 2>&1
+          apiVersion: apiserver.api-extension.harikube.info/v1
+          kind: TransactionRequest
+          metadata:
+            name: ${txn_name}
+            namespace: chainsaw-transaction-test
+          spec:
+            create:
+            - apiVersion: cert-manager.io/v1
+              kind: Certificate
+              metadata:
+                name: wallet-tls
+                namespace: chainsaw-transaction-test
+              spec:
+                secretName: wallet-tls
+                dnsNames:
+                - wallet.example.com
+                issuerRef:
+                  name: wallet-selfsigned
+          EOF
+          )
+          status=$?
+          set -e
+
+          if [ "$status" -ne 0 ]; then
+            printf '%s\n' "$response"
+            exit "$status"
+          fi
+
+          TXN_NAME="$txn_name" RESPONSE="$response" python - <<'PY'
+          import json
+          import os
+
+          response = json.loads(os.environ["RESPONSE"])
+          assert response["kind"] == "TransactionResponse", response
+          assert response["metadata"]["name"] == os.environ["TXN_NAME"], response
+          assert response["metadata"]["namespace"] == "chainsaw-transaction-test", response
+          assert response["metadata"]["resourceVersion"], response
+          PY
+  - name: Reject a transaction for an invalid Certificate
+    try:
+    - script:
+        content: |
+          set +e
+          output=$(cat <<'EOF' | kubectl create --raw "/apis/apiserver.api-extension.harikube.info/v1/namespaces/chainsaw-transaction-test/transactionrequests" -f - -v=8 2>&1
+          apiVersion: apiserver.api-extension.harikube.info/v1
+          kind: TransactionRequest
+          metadata:
+            name: reject-invalid-certificate
+            namespace: chainsaw-transaction-test
+          spec:
+            create:
+            - apiVersion: cert-manager.io/v1
+              kind: Certificate
+              metadata:
+                name: invalid-wallet-tls
+                namespace: chainsaw-transaction-test
+              spec:
+                secretName: invalid-wallet-tls
+                dnsNames:
+                - invalid-wallet.example.com
+                duration: 24h
+                renewBefore: 48h
+                issuerRef:
+                  name: wallet-selfsigned
+          EOF
+          )
+          status=$?
+          set -e
+
+          test "$status" -ne 0
+          printf '%s' "$output" | grep -Eqi 'renewBefore.*duration|duration.*renewBefore|must be less than'
