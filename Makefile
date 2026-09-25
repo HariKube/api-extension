@@ -73,6 +73,10 @@ test: manifests generate fmt vet setup-envtest ## Run tests.
 # - CERT_MANAGER_INSTALL_SKIP=true
 KIND_CLUSTER ?= api-extension-test-e2e
 KUBE_VERSION ?= v1.36.2
+DECISION_MAKER_PROVIDER ?= mock
+DECISION_MAKER_TIMEOUT ?= 30s
+DECISION_MAKER_CONFIG ?= config/config/decision-maker.yaml
+DECISION_MAKER_CONFIG_WRAPPER ?= ./hack/with-decision-maker-config.sh
 
 .PHONY: setup-test-integration
 setup-test-integration: cleanup-test-integration ## Set up a Kind cluster for integration tests if it does not exist
@@ -92,14 +96,14 @@ setup-test-integration: cleanup-test-integration ## Set up a Kind cluster for in
 
 	$(KUBECTL) wait --for=condition=Ready node/$(KIND_CLUSTER)-control-plane --timeout=120s
 
-	TAG=$(TAG) $(CHAINSAW) test --test-dir test/integration/01-build
-	TAG=$(TAG) $(CHAINSAW) test --test-dir test/integration/02-deploy
+	DECISION_MAKER_PROVIDER=$(DECISION_MAKER_PROVIDER) DECISION_MAKER_TIMEOUT=$(DECISION_MAKER_TIMEOUT) TAG=$(TAG) $(CHAINSAW) test --test-dir test/integration/01-build
+	DECISION_MAKER_PROVIDER=$(DECISION_MAKER_PROVIDER) DECISION_MAKER_TIMEOUT=$(DECISION_MAKER_TIMEOUT) TAG=$(TAG) $(CHAINSAW) test --test-dir test/integration/02-deploy
 
 .PHONY: test-integration
 test-integration: setup-test-integration _test-integration-run cleanup-test-integration
 
 _test-integration-run:
-	$(CHAINSAW) test --test-dir test/integration/03-tests
+	DECISION_MAKER_PROVIDER=$(DECISION_MAKER_PROVIDER) DECISION_MAKER_TIMEOUT=$(DECISION_MAKER_TIMEOUT) $(CHAINSAW) test --test-dir test/integration/03-tests
 
 .PHONY: cleanup-test-integration
 cleanup-test-integration: ## Tear down the Kind cluster used for integration tests
@@ -164,7 +168,7 @@ docker-buildx: ## Build and push docker image for the manager for cross-platform
 build-installer: manifests generate ## Generate a consolidated YAML with CRDs and deployment.
 	mkdir -p dist
 	cd config/manager && "$(KUSTOMIZE)" edit set image controller=${IMG}
-	"$(KUSTOMIZE)" build config/default > dist/install.yaml
+	DECISION_MAKER_PROVIDER=$(DECISION_MAKER_PROVIDER) DECISION_MAKER_TIMEOUT=$(DECISION_MAKER_TIMEOUT) $(DECISION_MAKER_CONFIG_WRAPPER) $(DECISION_MAKER_CONFIG) bash -lc '"$(KUSTOMIZE)" build config/default > dist/install.yaml'
 
 ##@ Deployment
 
@@ -185,8 +189,7 @@ uninstall: manifests ## Uninstall CRDs from the K8s cluster specified in ~/.kube
 .PHONY: deploy
 deploy: manifests ## Deploy controller to the K8s cluster specified in ~/.kube/config.
 	cd config/manager && "$(KUSTOMIZE)" edit set image controller=${IMG}
-	"$(KUSTOMIZE)" build config/config | "$(KUBECTL)" apply -f -
-	"$(KUSTOMIZE)" build config/default | "$(KUBECTL)" apply -f -
+	DECISION_MAKER_PROVIDER=$(DECISION_MAKER_PROVIDER) DECISION_MAKER_TIMEOUT=$(DECISION_MAKER_TIMEOUT) $(DECISION_MAKER_CONFIG_WRAPPER) $(DECISION_MAKER_CONFIG) bash -lc '"$(KUSTOMIZE)" build config/config | "$(KUBECTL)" apply -f - && "$(KUSTOMIZE)" build config/default | "$(KUBECTL)" apply -f -'
 
 .PHONY: redeploy
 redeploy: deploy ## Redeploy controller to the K8s cluster specified in ~/.kube/config.
@@ -265,7 +268,5 @@ package: manifests generate
 
 	cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
 
-	rm -f package/bundle-$(TAG).yaml ; $(KUSTOMIZE) build config/default >> package/bundle-$(TAG).yaml
-
-	rm -f package/bundle-config-$(TAG).yaml ; $(KUSTOMIZE) build config/config >> package/bundle-config-$(TAG).yaml
+	DECISION_MAKER_PROVIDER=$(DECISION_MAKER_PROVIDER) DECISION_MAKER_TIMEOUT=$(DECISION_MAKER_TIMEOUT) $(DECISION_MAKER_CONFIG_WRAPPER) $(DECISION_MAKER_CONFIG) bash -lc 'rm -f package/bundle-$(TAG).yaml package/bundle-config-$(TAG).yaml && $(KUSTOMIZE) build config/default > package/bundle-$(TAG).yaml && $(KUSTOMIZE) build config/config > package/bundle-config-$(TAG).yaml'
 	

@@ -1,0 +1,253 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: decision-maker
+  namespace: system
+data:
+  url: http://127.0.0.1:8088/system-one
+  provider: mock
+  port: "8088"
+  timeout: 30s
+  laya-cache: /var/cache/laya
+  server.mjs: |
+    import { createServer } from 'node:http';
+
+    const provider = (process.env.DECISION_MAKER_PROVIDER || 'mock').trim().toLowerCase();
+    const port = Number.parseInt(process.env.DECISION_MAKER_PORT || '8088', 10);
+
+    let layaInstancePromise;
+    let layaReady = provider !== 'laya';
+    let layaInitError = null;
+
+    const stopWords = new Set([
+      'a', 'an', 'and', 'are', 'as', 'at', 'be', 'because', 'but', 'by', 'for', 'from', 'have', 'i', 'if', 'in', 'is', 'it', 'may', 'no', 'not', 'of', 'on', 'or', 'our', 'so', 'still', 'that', 'the', 'their', 'them', 'there', 'they', 'this', 'to', 'two', 'was', 'we', 'were', 'which', 'who', 'why', 'will', 'with', 'would', 'you', 'your'
+    ]);
+
+    function normalizeWord(word) {
+      if (word.endsWith('ies') && word.length > 4) {
+        return `${word.slice(0, -3)}y`;
+      }
+      if (word.endsWith('es') && word.length > 4) {
+        return word.slice(0, -2);
+      }
+      if (word.endsWith('s') && word.length > 3) {
+        return word.slice(0, -1);
+      }
+      return word;
+    }
+
+    function normalizeText(value) {
+      if (value === null || value === undefined) {
+        return '';
+      }
+      if (typeof value === 'string') {
+        return value;
+      }
+      if (typeof value === 'number' || typeof value === 'boolean') {
+        return String(value);
+      }
+      if (Array.isArray(value)) {
+        return value.map(normalizeText).join(' ');
+      }
+      if (typeof value === 'object') {
+        return Object.entries(value)
+          .map(([key, entry]) => `${key} ${normalizeText(entry)}`)
+          .join(' ');
+      }
+      return String(value);
+    }
+
+    function tokenize(value) {
+      return normalizeText(value)
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, ' ')
+        .split(/\s+/)
+        .map(normalizeWord)
+        .filter((word) => word && !stopWords.has(word));
+    }
+
+    function keywordScore(tokenSet, text) {
+      const candidates = tokenize(text);
+      let score = 0;
+      for (const candidate of candidates) {
+        if (tokenSet.has(candidate)) {
+          score += 1;
+        }
+      }
+      return score;
+    }
+
+    function probabilityMap(scores) {
+      const entries = Object.entries(scores);
+      const total = entries.reduce((sum, [, value]) => sum + value, 0) || 1;
+      return Object.fromEntries(entries.map(([key, value]) => [key, Number((value / total).toFixed(4))]));
+    }
+
+    function mockSystemOne({ state, questions }) {
+      const stateTokens = tokenize(state);
+      const stateTokenSet = new Set(stateTokens);
+      const stateText = normalizeText(state).toLowerCase();
+      const answers = {};
+
+      for (const [name, question] of Object.entries(questions || {})) {
+        switch ((question.type || '').toLowerCase()) {
+          case 'choice': {
+            const criteria = question.criteria || {};
+            const scores = {};
+            for (const [option, description] of Object.entries(criteria)) {
+              const score = 1 + keywordScore(stateTokenSet, `${option} ${description}`);
+              scores[option] = score;
+            }
+            const probabilities = probabilityMap(scores);
+            const choice = Object.entries(probabilities).sort((left, right) => right[1] - left[1])[0]?.[0] || '';
+            answers[name] = { choice, probabilities };
+            break;
+          }
+          case 'score': {
+            const criteria = Array.isArray(question.criteria) ? question.criteria : [];
+            const rawWeights = criteria.map((label, index) => {
+              let weight = 1 + keywordScore(stateTokenSet, `${label}`);
+              if (stateText.includes(String(label).toLowerCase())) {
+                weight += index + 1;
+              }
+              return weight;
+            });
+            const total = rawWeights.reduce((sum, value) => sum + value, 0) || 1;
+            const distribution = rawWeights.map((value) => Number((value / total).toFixed(4)));
+            const score = Number(distribution.reduce((sum, value, index) => sum + value * index, 0).toFixed(4));
+            answers[name] = { score, distribution };
+            break;
+          }
+          case 'noul': {
+            const riskSignals = ['cancel', 'refund', 'dispute', 'chargeback', 'angry', 'urgent', 'critical'];
+            const signalCount = riskSignals.reduce((sum, signal) => sum + (stateText.includes(signal) ? 1 : 0), 0) + keywordScore(stateTokenSet, question.instructions || '');
+            answers[name] = { noul: signalCount > 0 ? 0.9 : 0.1 };
+            break;
+          }
+          default:
+            throw new Error(`unsupported question type for ${name}: ${question.type}`);
+        }
+      }
+
+      return {
+        answers,
+        usage: {
+          input_tokens: tokenize({ state, questions }).length,
+          provider,
+        },
+      };
+    }
+
+    async function loadLaya() {
+      if (!layaInstancePromise) {
+        layaInstancePromise = import('@receptron/laya').then(async ({ Laya }) => Laya.load({
+          cacheDir: process.env.LAYA_CACHE,
+          token: process.env.HF_TOKEN,
+          executionProviders: ['cpu'],
+          sessionOptions: { intraOpNumThreads: Number.parseInt(process.env.LAYA_THREADS || '2', 10) },
+        }));
+      }
+      return layaInstancePromise;
+    }
+
+    async function initializeProvider() {
+      if (provider !== 'laya') {
+        layaReady = true;
+        return;
+      }
+      try {
+        console.log('loading laya model')
+        await loadLaya();
+        layaReady = true;
+        console.log('laya model ready');
+      } catch (error) {
+        layaInitError = error instanceof Error ? error : new Error(String(error));
+        console.error('failed to initialize laya model', layaInitError);
+      }
+    }
+
+    async function systemOne(payload) {
+      if (!payload || typeof payload !== 'object') {
+        throw new Error('request body must be an object');
+      }
+      if (!payload.questions || typeof payload.questions !== 'object' || Object.keys(payload.questions).length === 0) {
+        throw new Error('questions are required');
+      }
+      if (provider === 'laya') {
+        if (layaInitError) {
+          throw new Error(`laya initialization failed: ${layaInitError.message}`);
+        }
+        if (!layaReady) {
+          throw new Error('laya model is still loading');
+        }
+        const laya = await loadLaya();
+        return laya.systemOne(payload.state, payload.questions);
+      }
+      return mockSystemOne(payload);
+    }
+
+    async function readJSON(req) {
+      const chunks = [];
+      for await (const chunk of req) {
+        chunks.push(chunk);
+      }
+      const raw = Buffer.concat(chunks).toString('utf8');
+      if (!raw.trim()) {
+        throw new Error('empty body');
+      }
+      return JSON.parse(raw);
+    }
+
+    function writeJSON(res, statusCode, body) {
+      const payload = JSON.stringify(body);
+      res.writeHead(statusCode, { 'content-type': 'application/json' });
+      res.end(payload);
+    }
+
+    const server = createServer(async (req, res) => {
+      if (req.method === 'GET' && req.url === '/healthz') {
+        if (provider === 'laya' && !layaReady) {
+          return writeJSON(res, layaInitError ? 500 : 503, {
+            ok: false,
+            provider,
+            ready: false,
+            error: layaInitError ? layaInitError.message : 'laya model is still loading',
+          });
+        }
+        return writeJSON(res, 200, { ok: true, provider, ready: true });
+      }
+      if (req.method === 'POST' && req.url === '/system-one') {
+        try {
+          const payload = await readJSON(req);
+          const result = await systemOne(payload);
+          return writeJSON(res, 200, result);
+        } catch (error) {
+          return writeJSON(res, 400, { error: error instanceof Error ? error.message : String(error) });
+        }
+      }
+      return writeJSON(res, 404, { error: 'not found' });
+    });
+
+    server.listen(port, '0.0.0.0', () => {
+      console.log(`decision-maker sidecar listening on ${port} using provider=${provider}`);
+      initializeProvider().catch((error) => {
+        layaInitError = error instanceof Error ? error : new Error(String(error));
+        console.error('unexpected decision-maker initialization failure', layaInitError);
+      });
+    });
+
+    const shutdown = async () => {
+      try {
+        if (layaInstancePromise) {
+          const laya = await layaInstancePromise;
+          if (laya && typeof laya.close === 'function') {
+            await laya.close();
+          }
+        }
+      } finally {
+        server.close(() => process.exit(0));
+      }
+    };
+
+    process.on('SIGTERM', shutdown);
+    process.on('SIGINT', shutdown);

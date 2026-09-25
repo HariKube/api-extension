@@ -1,0 +1,84 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: decision
+spec:
+  namespace: chainsaw-decision-test
+  timeouts:
+    assert: 1m
+    exec: 5m
+  steps:
+  - name: Submit a decision request
+    try:
+    - script:
+        content: |
+          kubectl get deployment api-extension-controller-manager -n harikube -o jsonpath='{.spec.template.spec.containers[*].name}' | grep -Eq '(^| )decision-maker( |$)'
+    - script:
+        content: |
+          response=$(cat <<'EOF' | kubectl create --raw "/apis/apiserver.api-extension.harikube.info/v1/namespaces/chainsaw-decision-test/decisionrequests" -f -
+          apiVersion: apiserver.api-extension.harikube.info/v1
+          kind: DecisionRequest
+          metadata:
+            name: refund-triage
+            namespace: chainsaw-decision-test
+          spec:
+            state:
+              subject: Refund not received
+              body: I cancelled two weeks ago and still have no refund. This is critical because the invoice is due and I may dispute the payment.
+            questions:
+              department:
+                type: choice
+                instructions: Which team should handle this ticket?
+                criteria:
+                  billing: payments refunds invoices disputes
+                  support: product help and bugs
+                  sales: new purchases
+              urgency:
+                type: score
+                instructions: How urgent is this ticket?
+                criteria:
+                - not urgent
+                - somewhat urgent
+                - urgent
+                - critical
+              churn_risk:
+                type: noul
+                instructions: Is the customer likely to cancel or dispute?
+          EOF
+          )
+
+          RESPONSE="$response" python - <<'PY'
+          import json
+          import os
+
+          response = json.loads(os.environ["RESPONSE"])
+          assert response["kind"] == "DecisionResponse", response
+          assert response["metadata"]["name"] == "refund-triage", response
+          assert response["metadata"]["namespace"] == "chainsaw-decision-test", response
+
+          answers = response["spec"]["answers"]
+          usage = response["spec"].get("usage", {})
+          provider = usage.get("provider")
+          if provider is not None:
+              assert provider in {"mock", "laya"}, response
+
+          department = answers["department"]
+          assert department["choice"] in {"billing", "support", "sales"}, answers
+          assert set(department["probabilities"]) == {"billing", "support", "sales"}, answers
+
+          if provider == "mock":
+              assert department["choice"] == "billing", answers
+
+          urgency = answers["urgency"]
+          assert isinstance(urgency["score"], (int, float)), answers
+          assert 0 <= urgency["score"] <= 3, answers
+          if "distribution" in urgency:
+              assert len(urgency["distribution"]) == 4, answers
+          else:
+              assert len(urgency["probabilities"]) == 4, answers
+
+          churn_risk = answers["churn_risk"]
+          assert isinstance(churn_risk["noul"], (int, float)), answers
+          assert 0 <= churn_risk["noul"] <= 1, answers
+          assert churn_risk["noul"] >= 0.5, answers
+          PY

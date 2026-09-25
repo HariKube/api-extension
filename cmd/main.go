@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -72,6 +73,8 @@ func main() {
 	var harikubeKeyFile string
 	var harikubeCAFile string
 	var harikubeSkipVerify bool
+	var decisionMakerURL string
+	var decisionMakerTimeout time.Duration
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -99,6 +102,8 @@ func main() {
 	flag.StringVar(&harikubeKeyFile, "harikube-key-file", "", "The KEY of the HariKube backend.")
 	flag.StringVar(&harikubeCAFile, "harikube-ca-file", "", "The CA of the HariKube backend.")
 	flag.BoolVar(&harikubeSkipVerify, "harikube-skip-verify", false, "The TLS skip verify flag of the HariKube backend.")
+	flag.StringVar(&decisionMakerURL, "decision-maker-url", apiserver.DefaultDecisionMakerURL(), "The base system-one endpoint exposed by the decision maker sidecar.")
+	flag.DurationVar(&decisionMakerTimeout, "decision-maker-timeout", apiserver.DefaultDecisionMakerTimeout(), "The timeout used for decision maker requests.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -261,7 +266,9 @@ func main() {
 			harikubeCertFile,
 			harikubeKeyFile,
 			harikubeCAFile,
-			harikubeSkipVerify)); err != nil {
+			harikubeSkipVerify,
+			decisionMakerURL,
+			decisionMakerTimeout)); err != nil {
 		setupLog.Error(err, "unable to add API server to manager")
 		os.Exit(1)
 	}

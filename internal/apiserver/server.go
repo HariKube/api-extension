@@ -25,17 +25,20 @@ const (
 	Version = "v1"
 )
 
-func New(kubeConfig *rest.Config, port, certFile, keyFile string, coreResources []string, harikubeUrls []string, harikubeCertFile, harikubeKeyFile string, harikubeCAFile string, harikubeSkipVerify bool) *searchAPIServer {
+func New(kubeConfig *rest.Config, port, certFile, keyFile string, coreResources []string, harikubeUrls []string, harikubeCertFile, harikubeKeyFile string, harikubeCAFile string, harikubeSkipVerify bool, decisionMakerURL string, decisionMakerTimeout time.Duration) *searchAPIServer {
 	sas := searchAPIServer{
-		kubeConfig:       kubeConfig,
-		port:             port,
-		certFile:         certFile,
-		keyFile:          keyFile,
-		coreResources:    coreResources,
-		harikubeUrls:     harikubeUrls,
-		harikubeCertFile: harikubeCertFile,
-		harikubeKeyFile:  harikubeKeyFile,
-		harikubeCAFile:   harikubeCAFile,
+		kubeConfig:           kubeConfig,
+		port:                 port,
+		certFile:             certFile,
+		keyFile:              keyFile,
+		coreResources:        coreResources,
+		harikubeUrls:         harikubeUrls,
+		harikubeCertFile:     harikubeCertFile,
+		harikubeKeyFile:      harikubeKeyFile,
+		harikubeCAFile:       harikubeCAFile,
+		harikubeSkipVerify:   harikubeSkipVerify,
+		decisionMakerURL:     decisionMakerURL,
+		decisionMakerTimeout: decisionMakerTimeout,
 	}
 
 	return &sas
@@ -43,16 +46,18 @@ func New(kubeConfig *rest.Config, port, certFile, keyFile string, coreResources 
 
 type searchAPIServer struct {
 	kaf.Server
-	kubeConfig         *rest.Config
-	port               string
-	certFile           string
-	keyFile            string
-	coreResources      []string
-	harikubeUrls       []string
-	harikubeCertFile   string
-	harikubeKeyFile    string
-	harikubeCAFile     string
-	harikubeSkipVerify bool
+	kubeConfig           *rest.Config
+	port                 string
+	certFile             string
+	keyFile              string
+	coreResources        []string
+	harikubeUrls         []string
+	harikubeCertFile     string
+	harikubeKeyFile      string
+	harikubeCAFile       string
+	harikubeSkipVerify   bool
+	decisionMakerURL     string
+	decisionMakerTimeout time.Duration
 }
 
 func (s *searchAPIServer) Start(ctx context.Context) (err error) {
@@ -99,6 +104,7 @@ func (s *searchAPIServer) Start(ctx context.Context) (err error) {
 	countHandler := getCountHandler(authClient, harikubeClient, s.coreResources, mapper)
 	transactionHandler := getTransactionHandler(authClient, harikubeClient, s.coreResources, mapper)
 	queryHandler := getQueryHandler(authClient, harikubeClient)
+	decisionHandler := getDecisionHandler(authClient, s.decisionMakerURL, s.decisionMakerTimeout)
 
 	s.Server = *kaf.NewServer(kaf.ServerConfig{
 		Port:     s.port,
@@ -110,6 +116,7 @@ func (s *searchAPIServer) Start(ctx context.Context) (err error) {
 			*countHandler,
 			*transactionHandler,
 			*queryHandler,
+			*decisionHandler,
 		},
 	})
 

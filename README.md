@@ -76,6 +76,96 @@ spec:
 EOF
 ```
 
+### Decision
+
+> HariKube - OpenSource: release-0.15.0 Enterprise: release-0.15.0
+
+Runs a Laya-compatible `systemOne` decision request through a colocated sidecar and returns the model answers as a Kubernetes-style response object. This is useful for ticket routing, urgency scoring, fraud/risk checks, and other low-latency application decisions that can be expressed as structured state plus typed questions.
+
+```bash
+cat <<EOF | kubectl create --raw "/apis/apiserver.api-extension.harikube.info/v1/namespaces/default/decisionrequests" -f -
+apiVersion: apiserver.api-extension.harikube.info/v1
+kind: DecisionRequest
+metadata:
+  name: refund-triage
+  namespace: default
+spec:
+  state:
+    subject: Refund not received
+    body: I cancelled two weeks ago and still have no refund.
+  questions:
+    department:
+      type: choice
+      instructions: Which team should handle this ticket?
+      criteria:
+        billing: payments refunds invoices disputes
+        support: product help and bugs
+        sales: new purchases
+    urgency:
+      type: score
+      instructions: How urgent is this ticket?
+      criteria:
+      - not urgent
+      - somewhat urgent
+      - urgent
+      - critical
+    churn_risk:
+      type: noul
+      instructions: Is the customer likely to cancel or dispute?
+EOF
+```
+
+Example response shape:
+
+```json
+{
+  "apiVersion": "apiserver.api-extension.harikube.info/v1",
+  "kind": "DecisionResponse",
+  "metadata": {
+    "name": "refund-triage",
+    "namespace": "default"
+  },
+  "spec": {
+    "answers": {
+      "department": {
+        "choice": "billing",
+        "probabilities": {
+          "billing": 0.9415,
+          "support": 0.031,
+          "sales": 0.0275
+        }
+      },
+      "urgency": {
+        "score": 1.3886,
+        "distribution": [0.1, 0.2, 0.5, 0.2]
+      },
+      "churn_risk": {
+        "noul": 0.0988
+      }
+    },
+    "usage": {
+      "input_tokens": 267
+    }
+  }
+}
+```
+
+### Decision sidecar deployment
+
+The default manifests now deploy a `decision-maker` sidecar in the same pod as the aggregated API server. The manager forwards `DecisionRequest` payloads to the sidecar over `http://127.0.0.1:8088/system-one`.
+
+By default the sidecar runs in `mock` mode so integration tests and local clusters do not need to download the real Laya model. The sidecar configuration lives in `config/config/decision-maker.yaml`:
+
+- `url`: endpoint passed into the manager via `--decision-maker-url`
+- `provider`: `mock` or `laya`
+- `port`: sidecar listen port
+- `laya-cache`: cache directory for model assets
+- `server.mjs`: the Node.js HTTP wrapper that exposes `/healthz` and `/system-one`
+
+The Laya cache is mounted from a PersistentVolumeClaim so model downloads survive pod restarts and rollouts. The default claim manifest is `config/config/decision-maker-cache-pvc.yaml`, which creates `api-extension-decision-maker-cache` with `ReadWriteOnce` and a `10Gi` request. Adjust the PVC spec if you need a specific `storageClassName`, larger capacity, or different access mode for your cluster.
+
+To switch to the real Laya runtime, set `provider: laya` and optionally create the `api-extension-decision-maker-secrets` secret with `hf-token` when pulling model assets from a private or rate-limited Hugging Face repository.
+
 ## Future Endpoints
 
 Proposed endpoints should follow the same Kubernetes-friendly pattern: standard selectors can stay in native request fields when possible, and any non-standard input should be encapsulated in a request resource instead of custom CLI flags. For read-oriented APIs, a shared request shape is recommended so the same endpoint family can combine Kubernetes-native selectors, Kiine-specific expressions, pagination, ordering, projection, and grouping in a predictable way.
