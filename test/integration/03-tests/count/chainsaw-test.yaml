@@ -15,7 +15,7 @@ spec:
         resource:
           apiVersion: v1
           data:
-            count: "5"
+            count: "13"
           kind: ConfigMap
           metadata:
             name: all-namespace
