@@ -55,6 +55,33 @@ func init() {
 	// +kubebuilder:scaffold:scheme
 }
 
+func splitCommaSeparated(value string) []string {
+	return splitCommaSeparatedWithOption(value, false)
+}
+
+func splitCommaSeparatedPreserveEmpty(value string) []string {
+	return splitCommaSeparatedWithOption(value, true)
+}
+
+func splitCommaSeparatedWithOption(value string, preserveEmpty bool) []string {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+
+	parts := strings.Split(value, ",")
+	values := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" && !preserveEmpty {
+			continue
+		}
+
+		values = append(values, part)
+	}
+
+	return values
+}
+
 // nolint:gocyclo
 func main() {
 	var metricsAddr string
@@ -122,9 +149,7 @@ func main() {
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
-	if rawHarikubeUrls, err := os.ReadFile(filepath.Clean(harikubeUrls)); err == nil {
-		harikubeUrls = string(rawHarikubeUrls)
-	}
+	harikubeUrls = strings.TrimSpace(harikubeUrls)
 	setupLog.Info("HariKube", "urls", harikubeUrls)
 
 	if harikubeCertFile != "" {
@@ -271,8 +296,8 @@ func main() {
 			apiServerPort,
 			apiServerCertFile,
 			apiServerKeyFile,
-			strings.Split(coreResources, ","),
-			strings.Split(harikubeUrls, ","),
+			splitCommaSeparatedPreserveEmpty(coreResources),
+			splitCommaSeparated(harikubeUrls),
 			harikubeCertFile,
 			harikubeKeyFile,
 			harikubeCAFile,

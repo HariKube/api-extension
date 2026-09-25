@@ -12,11 +12,4 @@ resources:
 - namespace.yaml
 - core-resources.yaml
 - decision-maker.yaml
-
-generatorOptions:
-  disableNameSuffixHash: true
-  
-secretGenerator:
-- name: harikube-connection
-  files:
-  - harikube.url
+- harikube-connection.yaml
