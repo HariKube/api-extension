@@ -2,6 +2,8 @@
 
 This repository contains a Kubernetes API extension to implement advanced data management.
 
+By default it runs as an Aggregation API registered in Kubernetes API, but setting `--apiserver-port=-1` extension became a sidecar next to your application over unix socket `/tmp/api-extension.socket`.
+
 > Recommended CLI: install the [`kubectl-harikube` plugin](https://github.com/HariKube/krew-harikube) so you can use `kubectl harikube ...` instead of building raw aggregation API paths manually.
 
 ## Endpoints

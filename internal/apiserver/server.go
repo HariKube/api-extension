@@ -4,7 +4,10 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
+	"net"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -132,7 +135,45 @@ func (s *searchAPIServer) Start(ctx context.Context) (err error) {
 		},
 	})
 
-	return s.Server.Start(ctx)
+	if s.port == "-1" {
+		srv := http.Server{}
+
+		var listener net.Listener
+		socketPath := "/tmp/api-extension.socket"
+		defer os.Remove(socketPath)
+
+		if err := os.Remove(socketPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+
+		listener, err = net.Listen("unix", socketPath)
+		if err != nil {
+			return fmt.Errorf("failed to listen on unix socket: %w", err)
+		}
+		defer listener.Close()
+
+		errChan := make(chan error, 1)
+		go func() {
+			if err := srv.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				errChan <- err
+			}
+			close(errChan)
+		}()
+
+		select {
+		case err := <-errChan:
+			return err
+		case <-ctx.Done():
+		}
+
+		if err = srv.Shutdown(context.Background()); err != nil {
+			return err
+		}
+
+		return nil
+	} else {
+		return s.Server.Start(ctx)
+	}
 }
 
 func (s *searchAPIServer) clientConfig(urls []string) (*tls.Config, error) {
