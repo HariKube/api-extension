@@ -5,6 +5,8 @@ resources:
 - bases/api-extension.harikube.info_countresponses.yaml
 - bases/api-extension.harikube.info_transactionrequests.yaml
 - bases/api-extension.harikube.info_transactionresponses.yaml
+- bases/api-extension.harikube.info_queries.yaml
+- bases/api-extension.harikube.info_decisionrequests.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:
