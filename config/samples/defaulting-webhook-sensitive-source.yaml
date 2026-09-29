@@ -1,0 +1,146 @@
+yo# Sample: defaulting webhook that calls the "DecisionRequest" API to determine whether
+# an admitted object's "source" contains sensitive information and labels the object
+# with harikube.io/source-contains-sensitive-info: "true" or "false" accordingly.
+# This file is example-oriented and intentionally self-contained for readers.
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sample-sensitive-webhook
+  labels:
+    app.kubernetes.io/name: sample-sensitive-webhook
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sensitive-webhook-sa
+  namespace: sample-sensitive-webhook
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: sensitive-webhook-decision-creator
+  namespace: sample-sensitive-webhook
+rules:
+  # Minimal permission to create DecisionRequest custom resources in this namespace
+  - apiGroups: ["apiserver.api-extension.harikube.info"]
+    resources: ["decisionrequests"]
+    verbs: ["create"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: bind-sensitive-webhook-sa
+  namespace: sample-sensitive-webhook
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: sensitive-webhook-decision-creator
+subjects:
+  - kind: ServiceAccount
+    name: sensitive-webhook-sa
+    namespace: sample-sensitive-webhook
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sensitive-source-webhook
+  namespace: sample-sensitive-webhook
+  labels:
+    app: sensitive-source-webhook
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sensitive-source-webhook
+  template:
+    metadata:
+      labels:
+        app: sensitive-source-webhook
+    spec:
+      serviceAccountName: sensitive-webhook-sa
+      containers:
+        - name: webhook
+          # Replace with your webhook image which implements an admission webhook server
+          image: ghcr.io/example/sensitive-source-webhook:latest
+          args: ["--tls-cert=/tls/tls.crt", "--tls-key=/tls/tls.key"]
+          ports:
+            - containerPort: 8443
+              name: https
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: DECISION_API_GROUP
+              value: "apiserver.api-extension.harikube.info"
+            - name: DECISION_API_VERSION
+              value: "v1"
+          # The webhook implementation (conceptual): on each CREATE admission it should
+          # POST a DecisionRequest to the API extension at
+          # /apis/apiserver.api-extension.harikube.info/v1/namespaces/<target-ns>/decisionrequests
+          # with a body describing the observed resource (e.g. source metadata / text),
+          # then use the DecisionResponse to decide whether to add the label
+          # harikube.io/source-contains-sensitive-info: "true"/"false" to the admitted object.
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sensitive-webhook-svc
+  namespace: sample-sensitive-webhook
+  labels:
+    app: sensitive-source-webhook
+spec:
+  selector:
+    app: sensitive-source-webhook
+  ports:
+    - port: 443
+      targetPort: 8443
+      protocol: TCP
+      name: https
+
+---
+# Mutating webhook registration that routes CREATE operations to the webhook service.
+# In a real installation, set `clientConfig.caBundle` to your webhook server CA bundle.
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: sensitive-source-defaulting-webhook
+webhooks:
+  - name: sensitive-source.defaulting.harikube.io
+    clientConfig:
+      service:
+        name: sensitive-webhook-svc
+        namespace: sample-sensitive-webhook
+        path: "/mutate"
+      # Replace with the base64 CA bundle used to sign the webhook server certificate
+      caBundle: "REPLACE_WITH_BASE64_CABUNDLE"
+    rules:
+      - operations: ["CREATE"]
+        apiGroups: ["*"]
+        apiVersions: ["*"]
+        resources: ["*"]
+        # scope can be "Namespaced", "Cluster", or "*"; here we demonstrate * (all scopes)
+        scope: "*"
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    # The webhook will typically examine the incoming object, POST a DecisionRequest
+    # (apiserver.api-extension.harikube.info/v1 DecisionRequest) to the API extension
+    # to obtain a decision and then patch the object with the label key used below.
+
+---
+# Example (illustrative) label that the webhook will add to admitted objects when the
+# DecisionResponse indicates the object's source contains sensitive information:
+#
+# metadata:
+#   labels:
+#     harikube.io/source-contains-sensitive-info: "true"
+
+# End of sample manifest

@@ -171,6 +171,33 @@ Example response shape:
 }
 ```
 
+#### Defaulting webhook example
+
+The recommended implementation is an external Go admission-webhook flow that uses the Kubernetes Go client (the dynamic client is fine) to create a DecisionRequest (apiserver.api-extension.harikube.info/v1) whose spec contains the object's source in spec.state and a question (e.g. contains_sensitive_info) in spec.questions, then examines the DecisionResponse (spec.answers) for the contains_sensitive_info result and emits a JSONPatch to add/set the harikube.io/source-contains-sensitive-info label on the admitted object.
+
+See the standalone, runnable Go sample for a complete implementation at config/samples/defaulting-webhook-sensitive-source.go.
+
+Compact sketch:
+
+```go
+// create DecisionRequest via dynamic/typed client, wait or re-fetch DecisionRequest
+// inspect resp.Spec.Answers["contains_sensitive_info"]
+// if sensitive -> return AdmissionResponse with JSONPatch:
+// [{"op":"add","path":"/metadata/labels/harikube.io~1source-contains-sensitive-info","value":"true"}]
+```
+
+#### Validation webhook example
+
+The validation flow is an external Go admission-webhook consumer of this API extension that creates a DecisionRequest (apiserver.api-extension.harikube.info/v1) with the object's textual source in spec.state and a question such as contains_sensitive_info in spec.questions, then polls or re-fetches the DecisionRequest to inspect spec.answers["contains_sensitive_info"] and returns an AdmissionReview response that denies the admission (allowed=false) when the answer indicates sensitive content. See the runnable sample at config/samples/validation-webhook-sensitive-source.go for a complete example.
+
+Compact sketch:
+
+```go
+// create DecisionRequest, wait/poll for status, check resp.Spec.Answers["contains_sensitive_info"]
+// build AdmissionResponse: allowed := (contains_sensitive_info == false)
+// if !allowed -> include a rejection message; otherwise allow
+```
+
 ### Decision sidecar deployment
 
 The default manifests now deploy a `decision-maker` sidecar in the same pod as the aggregated API server. The manager forwards `DecisionRequest` payloads to the sidecar over `http://127.0.0.1:8088/system-one`.
