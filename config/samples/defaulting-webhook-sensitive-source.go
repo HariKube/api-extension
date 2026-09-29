@@ -1,3 +1,5 @@
+//go:build ignore
+
 // Package main provides a compact, standalone example of how an admission-webhook
 // style mutating/defaulting handler might consult an external DecisionRequest
 // CRD (group: apiserver.api-extension.harikube.info, version: v1, resource: decisionrequests)
@@ -26,6 +28,17 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
+const (
+	decisionGroup    = "apiserver.api-extension.harikube.info"
+	decisionVersion  = "v1"
+	decisionResource = "decisionrequests"
+	questionKey      = "contains_sensitive_info"
+	answerContains   = "contains-sensitive-info"
+	answerNo         = "no-sensitive-info"
+	labelKey         = "harikube.io/source-contains-sensitive-info"
+	labelJSONPath    = "/metadata/labels/harikube.io~1source-contains-sensitive-info"
+)
+
 // This example handler demonstrates the essential flow an admission webhook
 // would perform: given an incoming object's source content (string), it creates
 // a DecisionRequest CR in a namespace, reads back the decision, and returns a
@@ -46,22 +59,16 @@ func buildKubeConfig() (*rest.Config, error) {
 // decision service can analyze it. The function returns the created object as
 // Unstructured for best-effort inspection of the status/answer.
 func createDecisionRequest(ctx context.Context, dc dynamic.Interface, namespace, source string) (*unstructured.Unstructured, error) {
-	// The API this repo exposes expects a DecisionRequest-style resource whose
-	// spec contains `state` (opaque value) and `questions` (map of named
-	// questions). We construct a simple state and a single choice question with
-	// the key "contains_sensitive_info" that asks whether the provided source
-	// contains sensitive information.
 	gvr := schema.GroupVersionResource{
-		Group:    "apiserver.api-extension.harikube.info",
-		Version:  "v1",
-		Resource: "decisionrequests",
+		Group:    decisionGroup,
+		Version:  decisionVersion,
+		Resource: decisionResource,
 	}
 
 	name := fmt.Sprintf("dr-sample-%d", time.Now().UnixNano())
-	questionKey := "contains_sensitive_info"
 	obj := &unstructured.Unstructured{
 		Object: map[string]interface{}{
-			"apiVersion": "apiserver.api-extension.harikube.info/v1",
+			"apiVersion": decisionGroup + "/" + decisionVersion,
 			"kind":       "DecisionRequest",
 			"metadata": map[string]interface{}{
 				"name": name,
@@ -75,8 +82,8 @@ func createDecisionRequest(ctx context.Context, dc dynamic.Interface, namespace,
 						"type":         "choice",
 						"instructions": "Does the provided source contain sensitive information?",
 						"criteria": map[string]interface{}{
-							"true":  "contains-sensitive-info",
-							"false": "no-sensitive-info",
+							"true":  answerContains,
+							"false": answerNo,
 						},
 					},
 				},
@@ -91,11 +98,6 @@ func createDecisionRequest(ctx context.Context, dc dynamic.Interface, namespace,
 // DecisionRequest object's status; real CRDs vary, so the code checks common
 // paths and falls back conservatively to false.
 func extractSensitiveDecision(dr *unstructured.Unstructured) bool {
-	// The server in this repo returns a DecisionResponse-like object whose
-	// answers are placed under spec.answers. We look up the concrete question
-	// key we asked for and interpret common answer shapes (bool, string, or
-	// nested object).
-	questionKey := "contains_sensitive_info"
 	spec, found, _ := unstructured.NestedMap(dr.Object, "spec")
 	if !found {
 		return false
@@ -121,7 +123,7 @@ func extractSensitiveDecision(dr *unstructured.Unstructured) bool {
 		return v
 	case string:
 		// Accept a variety of textual answers that mean "yes".
-		if v == "true" || v == "yes" || v == "contains-sensitive-info" || v == "contains_sensitive_info" {
+		if v == "true" || v == "yes" || v == answerContains || v == questionKey {
 			return true
 		}
 		return false
@@ -132,7 +134,7 @@ func extractSensitiveDecision(dr *unstructured.Unstructured) bool {
 			case bool:
 				return tv
 			case string:
-				if tv == "true" || tv == "contains-sensitive-info" {
+				if tv == "true" || tv == answerContains {
 					return true
 				}
 			}
@@ -161,7 +163,7 @@ func buildJSONPatchForLabel(incomingRaw []byte, contains bool) ([]byte, error) {
 		}
 	}
 
-	labelPath := "/metadata/labels/harikube.io~1source-contains-sensitive-info"
+	labelPath := labelJSONPath
 	labelValue := "false"
 	if contains {
 		labelValue = "true"
@@ -203,7 +205,8 @@ func main() {
 	}
 
 	namespace := "default" // adapt to the request's namespace in a real webhook
-	source := `User posted: My password is P@ssw0rd and my SSN is 123-45-6789` // incoming content
+	// Make the sample source easier to read while keeping the same content.
+	source := "User posted: My password is P@ssw0rd " + "and my SSN is 123-45-6789"
 
 	// Create the DecisionRequest and wait briefly for the controller to answer.
 	dr, err := createDecisionRequest(ctx, dyn, namespace, source)
@@ -220,7 +223,7 @@ func main() {
 	time.Sleep(500 * time.Millisecond)
 
 	// Re-fetch the DR to observe status updates.
-	gvr := schema.GroupVersionResource{Group: "apiserver.api-extension.harikube.info", Version: "v1", Resource: "decisionrequests"}
+	gvr := schema.GroupVersionResource{Group: decisionGroup, Version: decisionVersion, Resource: decisionResource}
 	dr, err = dyn.Resource(gvr).Namespace(namespace).Get(ctx, dr.GetName(), metav1.GetOptions{})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to get DecisionRequest after create: %v\n", err)

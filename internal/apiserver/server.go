@@ -140,7 +140,11 @@ func (s *searchAPIServer) Start(ctx context.Context) (err error) {
 
 		var listener net.Listener
 		socketPath := "/tmp/api-extension.socket"
-		defer os.Remove(socketPath)
+		defer func() {
+			if e := os.Remove(socketPath); e != nil && !errors.Is(e, os.ErrNotExist) {
+				fmt.Fprintf(os.Stderr, "warning: failed to remove socket %s: %v\n", socketPath, e)
+			}
+		}()
 
 		if err := os.Remove(socketPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
@@ -150,7 +154,11 @@ func (s *searchAPIServer) Start(ctx context.Context) (err error) {
 		if err != nil {
 			return fmt.Errorf("failed to listen on unix socket: %w", err)
 		}
-		defer listener.Close()
+		defer func() {
+			if e := listener.Close(); e != nil {
+				fmt.Fprintf(os.Stderr, "warning: failed to close listener: %v\n", e)
+			}
+		}()
 
 		errChan := make(chan error, 1)
 		go func() {

@@ -1,3 +1,5 @@
+//go:build ignore
+
 // Package main provides a compact, standalone example of how a validating admission
 // webhook handler could consult the DecisionRequest CRD (group: apiserver.api-extension.harikube.info,
 // version: v1, resource: decisionrequests) using the Kubernetes dynamic client to ask
