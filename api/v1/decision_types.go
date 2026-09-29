@@ -1,14 +1,14 @@
 package v1
 
 import (
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // DecisionQuestion describes a single question for a decision request
 type DecisionQuestion struct {
-	Type         string      `json:"type" yaml:"type"`
-	Instructions string      `json:"instructions" yaml:"instructions"`
+	Type         string                `json:"type" yaml:"type"`
+	Instructions string                `json:"instructions" yaml:"instructions"`
 	Criteria     *apiextensionsv1.JSON `json:"criteria,omitempty" yaml:"criteria,omitempty"`
 }
 
