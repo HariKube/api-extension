@@ -270,5 +270,5 @@ package: manifests generate
 
 	cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
 
-	DECISION_MAKER_PROVIDER=$(DECISION_MAKER_PROVIDER) DECISION_MAKER_TIMEOUT=$(DECISION_MAKER_TIMEOUT) $(DECISION_MAKER_CONFIG_WRAPPER) $(DECISION_MAKER_CONFIG) bash -lc 'rm -f package/bundle-$(TAG).yaml package/bundle-config-$(TAG).yaml && $(KUSTOMIZE) build $(CONFIG_KUSTOMIZATION) > package/bundle-config-$(TAG).yaml && { cat package/bundle-config-$(TAG).yaml; printf -- "\n---\n"; $(KUSTOMIZE) build $(DEFAULT_KUSTOMIZATION); } > package/bundle-$(TAG).yaml'
+	DECISION_MAKER_PROVIDER=$(DECISION_MAKER_PROVIDER) DECISION_MAKER_TIMEOUT=$(DECISION_MAKER_TIMEOUT) $(DECISION_MAKER_CONFIG_WRAPPER) $(DECISION_MAKER_CONFIG) bash -lc 'rm -f package/bundle-$(TAG).yaml package/bundle-config-$(TAG).yaml && $(KUSTOMIZE) build $(CONFIG_KUSTOMIZATION) > package/bundle-config-$(TAG).yaml && $(KUSTOMIZE) build $(DEFAULT_KUSTOMIZATION) > package/bundle-$(TAG).yaml'
 	
