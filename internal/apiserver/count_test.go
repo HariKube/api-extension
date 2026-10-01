@@ -290,6 +290,101 @@ func TestCountListHandlerVersionReturnsCountResponseList(t *testing.T) {
 	}
 }
 
+func TestCountListHandlerAllNamespacesCorePodReturnsCountResponseList(t *testing.T) {
+	originalSAR := countSubjectAccessReview
+	originalGetResource := countGetResource
+	originalCountGet := countGet
+	t.Cleanup(func() {
+		countSubjectAccessReview = originalSAR
+		countGetResource = originalGetResource
+		countGet = originalCountGet
+	})
+
+	var gotResourceAttributes authorizationv1.ResourceAttributes
+	var gotPrefix string
+
+	countSubjectAccessReview = func(_ context.Context, _ *authorizationclientv1.AuthorizationV1Client, resourceAttributes *authorizationv1.ResourceAttributes, _ http.Header) (*authorizationv1.SubjectAccessReview, error) {
+		// For all-namespaces requests the authorization Namespace should be empty
+		gotResourceAttributes = *resourceAttributes
+		return &authorizationv1.SubjectAccessReview{Status: authorizationv1.SubjectAccessReviewStatus{Allowed: true}}, nil
+	}
+	countGetResource = func(gvk schema.GroupVersionKind, _ *restmapper.DeferredDiscoveryRESTMapper) (*meta.RESTMapping, error) {
+		wantGVK := schema.GroupVersionKind{Version: "v1", Kind: "Pod"}
+		if gvk != wantGVK {
+			t.Fatalf("gvk = %#v, want %#v", gvk, wantGVK)
+		}
+
+		return &meta.RESTMapping{
+			Resource: schema.GroupVersionResource{Version: "v1", Resource: "pods"},
+			Scope:    meta.RESTScopeNamespace,
+		}, nil
+	}
+	countGet = func(_ context.Context, _ *clientv3.Client, key string, opts ...clientv3.OpOption) (*clientv3.GetResponse, error) {
+		gotPrefix = key
+		if len(opts) != 2 {
+			t.Fatalf("len(opts) = %d, want %d", len(opts), 2)
+		}
+
+		return &clientv3.GetResponse{Header: &etcdserverpb.ResponseHeader{Revision: 31}, Count: 42}, nil
+	}
+
+	handler := getCountHandler(&authorizationclientv1.AuthorizationV1Client{}, &clientv3.Client{}, []string{""}, &restmapper.DeferredDiscoveryRESTMapper{})
+
+	req := httptest.NewRequest(http.MethodGet, "/counts?fieldSelector=apiVersion=/v1,kind=Pod", nil)
+	rec := httptest.NewRecorder()
+
+	// Important: call with empty namespace to simulate -A / all-namespaces
+	handler.CustomResource.ListHandler("", "", rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if got := rec.Header().Get("Content-Type"); got != "application/json" {
+		t.Fatalf("content type = %q, want %q", got, "application/json")
+	}
+	if gotPrefix != "/registry/pods/" {
+		t.Fatalf("prefix = %q, want %q", gotPrefix, "/registry/pods/")
+	}
+	if gotResourceAttributes.Namespace != "" || gotResourceAttributes.Verb != "list" || gotResourceAttributes.Group != "" || gotResourceAttributes.Version != "v1" || gotResourceAttributes.Resource != "pods" {
+		t.Fatalf("resourceAttributes = %#v", gotResourceAttributes)
+	}
+
+	var resp apiextv1.CountResponseList
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+
+	if resp.APIVersion != apiextv1.SchemeBuilder.GroupVersion.String() {
+		t.Fatalf("apiVersion = %q, want %q", resp.APIVersion, apiextv1.SchemeBuilder.GroupVersion.String())
+	}
+	if resp.Kind != "CountResponseList" {
+		t.Fatalf("kind = %q, want %q", resp.Kind, "CountResponseList")
+	}
+	if resp.ResourceVersion != "31" {
+		t.Fatalf("resourceVersion = %q, want %q", resp.ResourceVersion, "31")
+	}
+	if len(resp.Items) != 1 {
+		t.Fatalf("len(items) = %d, want %d", len(resp.Items), 1)
+	}
+
+	item := resp.Items[0]
+	if item.Name != "Pod" {
+		t.Fatalf("item name = %q, want %q", item.Name, "Pod")
+	}
+	if item.Namespace != "" {
+		t.Fatalf("item namespace = %q, want empty", item.Namespace)
+	}
+	if item.ResourceVersion != "31" {
+		t.Fatalf("item resourceVersion = %q, want %q", item.ResourceVersion, "31")
+	}
+	if item.Spec.Count != 42 {
+		t.Fatalf("item count = %d, want %d", item.Spec.Count, 42)
+	}
+	if item.CreationTimestamp == (metav1.Time{}) {
+		t.Fatal("creationTimestamp was not set")
+	}
+}
+
 func TestCountListHandlerGroupVersionReturnsCountResponseList(t *testing.T) {
 	originalSAR := countSubjectAccessReview
 	originalGetResource := countGetResource

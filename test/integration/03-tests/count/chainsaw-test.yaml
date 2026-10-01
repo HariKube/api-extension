@@ -20,12 +20,12 @@ spec:
           metadata:
             name: all-namespace
     - script:
-        content: kubectl create configmap -n chainsaw-pod-test harikube-namespace --from-literal="count=$(kubectl get counts -n harikube --field-selector=apiVersion=/v1,kind=Pod -o jsonpath='{.items[0].spec.count}')"
+        content: kubectl create configmap -n chainsaw-pod-test harikube-namespace --from-literal="count=$(kubectl get counts -n kube-system --field-selector=apiVersion=/v1,kind=Pod -o jsonpath='{.items[0].spec.count}')"
     - assert:
         resource:
           apiVersion: v1
           data:
-            count: "1"
+            count: "8"
           kind: ConfigMap
           metadata:
             name: harikube-namespace
@@ -40,7 +40,17 @@ spec:
           metadata:
             name: label-selector
     - script:
-        content: kubectl create configmap -n chainsaw-pod-test field-selector --from-literal="count=$(kubectl get counts -A --field-selector=apiVersion=/v1,kind=Pod,metadata.namespace=harikube -o jsonpath='{.items[0].spec.count}')"
+        content: kubectl create configmap -n chainsaw-pod-test field-selector --from-literal="count=$(kubectl get counts -A --field-selector=apiVersion=/v1,kind=Pod,metadata.namespace=kube-system -o jsonpath='{.items[0].spec.count}')"
+    - assert:
+        resource:
+          apiVersion: v1
+          data:
+            count: "8"
+          kind: ConfigMap
+          metadata:
+            name: field-selector
+    - script:
+        content: kubectl create serviceaccount sa-count-test -n chainsaw-pod-test && kubectl create configmap -n chainsaw-pod-test sa-count --from-literal="count=$(kubectl get counts -n kube-system --field-selector=apiVersion=/v1,kind=ServiceAccount,metadata.name=kube-proxy -o jsonpath='{.items[0].spec.count}')"
     - assert:
         resource:
           apiVersion: v1
@@ -48,5 +58,74 @@ spec:
             count: "1"
           kind: ConfigMap
           metadata:
-            name: field-selector
+            name: sa-count
+    - script:
+        content: kubectl create secret generic secret-count-test -n chainsaw-pod-test --from-literal=key=value && kubectl create configmap -n chainsaw-pod-test secret-count --from-literal="count=$(kubectl get counts -n harikube --field-selector=apiVersion=/v1,kind=Secret,metadata.name=api-extension-harikube-connection -o jsonpath='{.items[0].spec.count}')"
+    - assert:
+        resource:
+          apiVersion: v1
+          data:
+            count: "1"
+          kind: ConfigMap
+          metadata:
+            name: secret-count
+    - script:
+        content: kubectl create role role-count-test --verb=get --resource=pods -n chainsaw-pod-test && kubectl create configmap -n chainsaw-pod-test role-count --from-literal="count=$(kubectl get counts -n harikube --field-selector=apiVersion=rbac.authorization.k8s.io/v1,kind=Role,metadata.name=api-extension-leader-election-role -o jsonpath='{.items[0].spec.count}')"
+    - assert:
+        resource:
+          apiVersion: v1
+          data:
+            count: "1"
+          kind: ConfigMap
+          metadata:
+            name: role-count
+    - script:
+        content: kubectl create clusterrole clusterrole-count-test --verb=get --resource=nodes && kubectl create configmap -n chainsaw-pod-test clusterrole-count --from-literal="count=$(kubectl get counts --field-selector=apiVersion=rbac.authorization.k8s.io/v1,kind=ClusterRole,metadata.name=system:coredns -o jsonpath='{.items[0].spec.count}')"
+    - assert:
+        resource:
+          apiVersion: v1
+          data:
+            count: "1"
+          kind: ConfigMap
+          metadata:
+            name: clusterrole-count
+    - script:
+        content: |-
+          kubectl apply -f - <<'YAML'
+          apiVersion: cert-manager.io/v1
+          kind: Issuer
+          metadata:
+            name: issuer-count-test
+            namespace: chainsaw-pod-test
+          spec:
+            selfSigned: {}
+          YAML
+          kubectl create configmap -n chainsaw-pod-test issuer-count --from-literal="count=$(kubectl get counts -n chainsaw-pod-test --field-selector=apiVersion=cert-manager.io/v1,kind=Issuer,metadata.name=issuer-count-test -o jsonpath='{.items[0].spec.count}')"
+    - assert:
+        resource:
+          apiVersion: v1
+          data:
+            count: "1"
+          kind: ConfigMap
+          metadata:
+            name: issuer-count
+    - script:
+        content: |-
+          kubectl apply -f - <<'YAML'
+          apiVersion: cert-manager.io/v1
+          kind: ClusterIssuer
+          metadata:
+            name: clusterissuer-count-test
+          spec:
+            selfSigned: {}
+          YAML
+          kubectl create configmap -n chainsaw-pod-test clusterissuer-count --from-literal="count=$(kubectl get counts -A --field-selector=apiVersion=cert-manager.io/v1,kind=ClusterIssuer,metadata.name=clusterissuer-count-test -o jsonpath='{.items[0].spec.count}')"
+    - assert:
+        resource:
+          apiVersion: v1
+          data:
+            count: "1"
+          kind: ConfigMap
+          metadata:
+            name: clusterissuer-count
 
