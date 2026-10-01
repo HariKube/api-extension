@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"strings"
 
-	goplural "github.com/gertd/go-pluralize"
 	"go.yaml.in/yaml/v2"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -24,10 +23,6 @@ const (
 	contentDetailsTableV1Beta1 = "as=Table;v=v1beta1;g=meta.k8s.io"
 	contentTypeJSON            = "application/json"
 	contentTypeYAML            = "application/yaml"
-)
-
-var (
-	pluralize = goplural.NewClient()
 )
 
 func subjectAccessReview(ctx context.Context, authClient *authorizationclientv1.AuthorizationV1Client, resourceAttributes *authorizationv1.ResourceAttributes, headers http.Header) (*authorizationv1.SubjectAccessReview, error) {

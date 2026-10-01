@@ -82,37 +82,22 @@ func getCountHandler(authClient *authorizationclientv1.AuthorizationV1Client, ha
 
 				gvk := schema.GroupVersionKind{Kind: kind}
 				if parts := strings.Split(apiVersion, "/"); len(parts) == 1 {
-					gvk.Group = parts[0]
+					p := parts[0]
+					// If the single-part apiVersion looks like a core version (e.g. v1, v1beta1)
+					// treat it as Version with empty Group; otherwise treat it as a
+					// group-only identifier (e.g. cert-manager.io) and leave Version empty
+					// so the RESTMapper can pick the preferred version for the group.
+					if strings.HasPrefix(p, "v") && len(p) > 1 && p[1] >= '0' && p[1] <= '9' {
+						gvk.Version = p
+					} else {
+						gvk.Group = p
+					}
 				} else {
 					gvk.Group = parts[0]
 					gvk.Version = parts[1]
 				}
-				gvr := schema.GroupVersionResource{
-					Group:    gvk.Group,
-					Version:  gvk.Version,
-					Resource: pluralize.Plural(strings.ToLower(gvk.Kind)),
-				}
 
-				ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-				defer cancel()
-
-				if result, err := countSubjectAccessReview(ctx, authClient,
-					&authorizationv1.ResourceAttributes{
-						Namespace: namespace,
-						Verb:      "list",
-						Group:     gvr.Group,
-						Version:   gvr.Version,
-						Resource:  gvr.Resource,
-					}, r.Header); err != nil {
-					http.Error(w, "resource not found", http.StatusNotFound)
-
-					return
-				} else if !result.Status.Allowed {
-					http.Error(w, "resource forbidden", http.StatusForbidden)
-
-					return
-				}
-
+				// resolve the RESTMapping first so we use the mapping-derived group/version/resource
 				resource, err := countGetResource(gvk, mapper)
 				if err != nil {
 					http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -124,11 +109,33 @@ func getCountHandler(authClient *authorizationclientv1.AuthorizationV1Client, ha
 					return
 				}
 
+				ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+				defer cancel()
+
+				if result, err := countSubjectAccessReview(ctx, authClient,
+					&authorizationv1.ResourceAttributes{
+						Namespace: namespace,
+						Verb:      "list",
+						Group:     resource.Resource.Group,
+						Version:   resource.Resource.Version,
+						Resource:  resource.Resource.Resource,
+					}, r.Header); err != nil {
+					http.Error(w, "resource not found", http.StatusNotFound)
+
+					return
+				} else if !result.Status.Allowed {
+					http.Error(w, "resource forbidden", http.StatusForbidden)
+
+					return
+				}
+
+				// construct the etcd key using the mapping-aligned identity (use mapping's group/version)
+				alignedGVK := schema.GroupVersionKind{Group: resource.Resource.Group, Version: resource.Resource.Version, Kind: gvk.Kind}
 				if resource.Scope.Name() == meta.RESTScopeNameRoot {
 					namespace = ""
 				}
 
-				prefix, err := etcdKeyForGroupVersionKind(gvk, namespace, resource, coreResourcesMap)
+				prefix, err := etcdKeyForGroupVersionKind(alignedGVK, namespace, resource, coreResourcesMap)
 				if err != nil {
 					http.Error(w, err.Error(), http.StatusInternalServerError)
 
