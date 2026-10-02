@@ -142,30 +142,50 @@ func getCountHandler(authClient *authorizationclientv1.AuthorizationV1Client, ha
 					return
 				}
 
-				logger := countLogger.WithValues("gvk", gvk.String(), "namespace", namespace, "selector", query.Get("labelSelector"), "field-selector", fieldSelector, "prefix", prefix)
+				ls := query.Get("labelSelector")
+				hasLabelSelector := ls != ""
+				hasFieldSelector := fieldSelector != ""
+
+				logger := countLogger.WithValues(
+					"gvk", gvk.String(),
+					"namespace", namespace,
+					"rawLabelSelector", ls,
+					"parsedFieldSelector", fieldSelector,
+					"resolvedResource", resource.Resource.Resource,
+					"resolvedGroup", resource.Resource.Group,
+					"resolvedVersion", resource.Resource.Version,
+					"resourceScope", resource.Scope.Name(),
+					"prefix", prefix,
+					"hasLabelSelector", hasLabelSelector,
+					"hasFieldSelector", hasFieldSelector,
+				)
 				logger.Info("Counting")
 
 				opts := []clientv3.OpOption{
 					clientv3.WithCountOnly(),
 					clientv3.WithPrefix(),
 				}
-				if ls := query.Get("labelSelector"); ls != "" {
+				if hasLabelSelector {
 					opts = append(opts, clientv3.WithLabelSelector(ls))
 				}
-				if fieldSelector != "" {
+				if hasFieldSelector {
 					opts = append(opts, clientv3.WithFieldSelector(fieldSelector))
 				}
 
 				countResp, err := countGet(ctx, harikubeClient, prefix, opts...)
 				if err != nil {
+					countLogger.Error(err, "countGet failed", "prefix", prefix, "rawLabelSelector", ls, "parsedFieldSelector", fieldSelector, "hasLabelSelector", hasLabelSelector, "hasFieldSelector", hasFieldSelector)
 					http.Error(w, err.Error(), http.StatusInternalServerError)
 
 					return
 				} else if countResp == nil {
+					countLogger.Info("countGet returned nil response", "prefix", prefix, "rawLabelSelector", ls, "parsedFieldSelector", fieldSelector, "hasLabelSelector", hasLabelSelector, "hasFieldSelector", hasFieldSelector)
 					http.Error(w, "prefix not found", http.StatusNotFound)
 
 					return
 				}
+
+				logger.Info("countGet returned", "count", countResp.Count, "revision", countResp.Header.Revision)
 
 				resp := apiextv1.CountResponse{
 					TypeMeta: metav1.TypeMeta{
