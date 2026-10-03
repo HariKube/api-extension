@@ -389,6 +389,35 @@ func TestTransactionCreateHandlerRejectsInvalidBody(t *testing.T) {
 	}
 }
 
+func TestTransactionCreateHandlerRejectsEmptyBody(t *testing.T) {
+	originalSAR := transactionSubjectAccessReview
+	originalCommit := transactionCommit
+	t.Cleanup(func() {
+		transactionSubjectAccessReview = originalSAR
+		transactionCommit = originalCommit
+	})
+
+	transactionSubjectAccessReview = func(_ context.Context, _ *authorizationclientv1.AuthorizationV1Client, _ *authorizationv1.ResourceAttributes, _ http.Header) (*authorizationv1.SubjectAccessReview, error) {
+		return &authorizationv1.SubjectAccessReview{Status: authorizationv1.SubjectAccessReviewStatus{Allowed: true}}, nil
+	}
+	transactionCommit = func(_ context.Context, _ *clientv3.Client, _, _ string, _ map[string][]byte) (*clientv3.TxnResponse, error) {
+		t.Fatal("transactionCommit should not be called")
+		return nil, nil
+	}
+
+	handler := getTransactionHandler(&authorizationclientv1.AuthorizationV1Client{}, &clientv3.Client{}, []string{""}, &restmapper.DeferredDiscoveryRESTMapper{})
+
+	// empty body exercises the empty-body branch
+	req := httptest.NewRequest(http.MethodPost, "/apis/apiserver.api-extension.harikube.info/namespaces/default/transactionrequests", strings.NewReader(""))
+	rec := httptest.NewRecorder()
+
+	handler.CustomResource.CreateHandler("default", "", rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
 func TestTransactionCreateHandlerRejectsResourcesFailingValidation(t *testing.T) {
 	body := `apiVersion: apiserver.api-extension.harikube.info/v1
 kind: TransactionRequest

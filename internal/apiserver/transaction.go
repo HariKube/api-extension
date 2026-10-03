@@ -160,6 +160,34 @@ func transactionStorageKey(namespace, name string) string {
 	return fmt.Sprintf("/harikube/transaction/%s/%s", namespace, name)
 }
 
+func parseTransactionAndNamespace(r *http.Request, namespace string) (*transactionRequest, string, int, string, error) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		return nil, "", http.StatusBadRequest, "", err
+	}
+	if len(strings.TrimSpace(string(body))) == 0 {
+		return nil, "", http.StatusBadRequest, "empty body", nil
+	}
+
+	transaction, err := decodeTransactionRequest(body)
+	if err != nil {
+		return nil, "", 0, "", err
+	}
+
+	requestNamespace := namespace
+	if requestNamespace == "" {
+		requestNamespace = transactionRequestNamespace(r.URL.Path)
+	}
+	if transaction.Namespace != "" && requestNamespace != "" && transaction.Namespace != requestNamespace {
+		return nil, "", http.StatusBadRequest, "metadata.namespace does not match request namespace", nil
+	}
+	if requestNamespace == "" {
+		requestNamespace = transaction.Namespace
+	}
+
+	return transaction, requestNamespace, 0, "", nil
+}
+
 func getTransactionHandler(authClient *authorizationclientv1.AuthorizationV1Client, harikubeClient *clientv3.Client, coreResources []string, mapper *restmapper.DeferredDiscoveryRESTMapper) *kaf.APIKind {
 	coreResourcesMap := map[string]bool{}
 	for i := range coreResources {
@@ -179,71 +207,43 @@ func getTransactionHandler(authClient *authorizationclientv1.AuthorizationV1Clie
 				ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 				defer cancel()
 
-				body, err := io.ReadAll(r.Body)
+				transaction, requestNamespace, status, msg, err := parseTransactionAndNamespace(r, namespace)
+				if status != 0 {
+					http.Error(w, msg, status)
+					return
+				}
 				if err != nil {
 					http.Error(w, err.Error(), http.StatusBadRequest)
-
 					return
-				}
-				if len(strings.TrimSpace(string(body))) == 0 {
-					http.Error(w, "empty body", http.StatusBadRequest)
-
-					return
-				}
-
-				transaction, err := decodeTransactionRequest(body)
-				if err != nil {
-					http.Error(w, err.Error(), http.StatusBadRequest)
-
-					return
-				}
-
-				requestNamespace := namespace
-				if requestNamespace == "" {
-					requestNamespace = transactionRequestNamespace(r.URL.Path)
-				}
-				if transaction.Namespace != "" && requestNamespace != "" && transaction.Namespace != requestNamespace {
-					http.Error(w, "metadata.namespace does not match request namespace", http.StatusBadRequest)
-
-					return
-				}
-				if requestNamespace == "" {
-					requestNamespace = transaction.Namespace
 				}
 
 				if err := transactionAuthorizeAll(ctx, authClient, r.Header, transaction, requestNamespace, mapper); err != nil {
 					http.Error(w, "resource forbidden", http.StatusForbidden)
-
 					return
 				}
 
 				resources := map[string][]byte{}
 
-				for _, entry := range transaction.Create {
-					if err := transactionResourceMap(ctx, authClient, resources, entry, requestNamespace, transactionOperationCreate, coreResourcesMap, mapper); err != nil {
-						http.Error(w, err.Error(), http.StatusBadRequest)
-
-						return
-					}
+				operations := []struct {
+					items [][]byte
+					op    string
+				}{
+					{items: transaction.Create, op: transactionOperationCreate},
+					{items: transaction.Update, op: transactionOperationUpdate},
+					{items: transaction.Delete, op: transactionOperationDelete},
 				}
-				for _, entry := range transaction.Update {
-					if err := transactionResourceMap(ctx, authClient, resources, entry, requestNamespace, transactionOperationUpdate, coreResourcesMap, mapper); err != nil {
-						http.Error(w, err.Error(), http.StatusBadRequest)
 
-						return
-					}
-				}
-				for _, entry := range transaction.Delete {
-					if err := transactionResourceMap(ctx, authClient, resources, entry, requestNamespace, transactionOperationDelete, coreResourcesMap, mapper); err != nil {
-						http.Error(w, err.Error(), http.StatusBadRequest)
-
-						return
+				for _, group := range operations {
+					for _, entry := range group.items {
+						if err := transactionResourceMap(ctx, authClient, resources, entry, requestNamespace, group.op, coreResourcesMap, mapper); err != nil {
+							http.Error(w, err.Error(), http.StatusBadRequest)
+							return
+						}
 					}
 				}
 
 				if len(resources) == 0 {
 					http.Error(w, "empty transaction spec", http.StatusBadRequest)
-
 					return
 				}
 
@@ -261,15 +261,12 @@ func getTransactionHandler(authClient *authorizationclientv1.AuthorizationV1Clie
 				commitResp, err := transactionCommit(ctx, harikubeClient, requestNamespace, txnName, resources)
 				if err != nil {
 					http.Error(w, err.Error(), http.StatusInternalServerError)
-
 					return
 				} else if commitResp == nil {
 					http.Error(w, "transaction not stored", http.StatusInternalServerError)
-
 					return
 				} else if !commitResp.Succeeded {
 					http.Error(w, "transaction failed", http.StatusInternalServerError)
-
 					return
 				}
 
@@ -307,7 +304,6 @@ func getTransactionHandler(authClient *authorizationclientv1.AuthorizationV1Clie
 				container, ok, err := tableResponse(contentDetails, resp.ResourceVersion, columns, cells, &resp)
 				if err != nil {
 					http.Error(w, err.Error(), http.StatusInternalServerError)
-
 					return
 				}
 				if !ok {
@@ -316,7 +312,6 @@ func getTransactionHandler(authClient *authorizationclientv1.AuthorizationV1Clie
 
 				if err := writeResponse(w, http.StatusCreated, container, contentType); err != nil {
 					logger.Info("Write error", "error", err)
-
 					return
 				}
 			},

@@ -75,6 +75,97 @@ func getDecisionHandler(config decisionHandlerConfig) *kaf.APIKind {
 		config.decisionMakerTimeout = defaultDecisionMakerTimeout
 	}
 
+	// small helpers extracted to reduce nesting while preserving behavior
+	authorize := func(ctx context.Context, headers http.Header, namespace string, w http.ResponseWriter) bool {
+		if result, err := config.authorize(ctx,
+			&authorizationv1.ResourceAttributes{
+				Namespace: namespace,
+				Verb:      "create",
+				Group:     Group,
+				Resource:  "decisionrequests",
+			}, headers); err != nil {
+			http.Error(w, "resource not found", http.StatusNotFound)
+			return false
+		} else if !result.Status.Allowed {
+			http.Error(w, "resource forbidden", http.StatusForbidden)
+			return false
+		}
+		return true
+	}
+
+	readAndDecode := func(r *http.Request, w http.ResponseWriter) (*decisionRequest, bool) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return nil, false
+		}
+		if len(strings.TrimSpace(string(body))) == 0 {
+			http.Error(w, "empty body", http.StatusBadRequest)
+			return nil, false
+		}
+		request, err := decodeDecisionRequest(body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return nil, false
+		}
+		return request, true
+	}
+
+	resolveNamespaceAndName := func(r *http.Request, namespace string, name string, request *decisionRequest, w http.ResponseWriter) (string, string, bool) {
+		requestNamespace := namespace
+		if requestNamespace == "" {
+			requestNamespace = transactionRequestNamespace(r.URL.Path)
+		}
+		if request.Namespace != "" && requestNamespace != "" && request.Namespace != requestNamespace {
+			http.Error(w, "metadata.namespace does not match request namespace", http.StatusBadRequest)
+			return "", "", false
+		}
+		if requestNamespace == "" {
+			requestNamespace = request.Namespace
+		}
+
+		decisionName := request.Name
+		if decisionName == "" {
+			decisionName = name
+		}
+		if decisionName == "" {
+			decisionName = fmt.Sprintf("decision-%d", time.Now().UnixNano())
+		}
+
+		return requestNamespace, decisionName, true
+	}
+
+	callAndWrite := func(ctx context.Context, endpoint, decisionName, requestNamespace string, request *decisionRequest, w http.ResponseWriter, r *http.Request) {
+		response, err := invokeDecisionMaker(ctx, endpoint, &decisionSystemOneRequest{
+			State:     request.State,
+			Questions: request.Questions,
+		})
+		if err != nil {
+			decisionLogger.Error(err, "decision maker call failed", "endpoint", endpoint, "name", decisionName, "namespace", requestNamespace)
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+
+		contentType, _ := responseContent(r.Header)
+		container := map[string]interface{}{
+			"apiVersion": Group + "/" + Version,
+			"kind":       "DecisionResponse",
+			"metadata": map[string]interface{}{
+				"name":              decisionName,
+				"namespace":         requestNamespace,
+				"creationTimestamp": metav1.Now().Format(time.RFC3339),
+			},
+			"spec": map[string]interface{}{
+				"answers": response.Answers,
+				"usage":   response.Usage,
+			},
+		}
+
+		if err := writeResponse(w, http.StatusCreated, container, contentType); err != nil {
+			decisionLogger.Info("Write error", "error", err)
+		}
+	}
+
 	return &kaf.APIKind{
 		ApiResource: metav1.APIResource{
 			Name:         "decisionrequests",
@@ -88,84 +179,21 @@ func getDecisionHandler(config decisionHandlerConfig) *kaf.APIKind {
 				ctx, cancel := context.WithTimeout(r.Context(), config.decisionMakerTimeout)
 				defer cancel()
 
-				if result, err := config.authorize(ctx,
-					&authorizationv1.ResourceAttributes{
-						Namespace: namespace,
-						Verb:      "create",
-						Group:     Group,
-						Resource:  "decisionrequests",
-					}, r.Header); err != nil {
-					http.Error(w, "resource not found", http.StatusNotFound)
-					return
-				} else if !result.Status.Allowed {
-					http.Error(w, "resource forbidden", http.StatusForbidden)
+				if !authorize(ctx, r.Header, namespace, w) {
 					return
 				}
 
-				body, err := io.ReadAll(r.Body)
-				if err != nil {
-					http.Error(w, err.Error(), http.StatusBadRequest)
-					return
-				}
-				if len(strings.TrimSpace(string(body))) == 0 {
-					http.Error(w, "empty body", http.StatusBadRequest)
+				request, ok := readAndDecode(r, w)
+				if !ok {
 					return
 				}
 
-				request, err := decodeDecisionRequest(body)
-				if err != nil {
-					http.Error(w, err.Error(), http.StatusBadRequest)
+				requestNamespace, decisionName, ok := resolveNamespaceAndName(r, namespace, name, request, w)
+				if !ok {
 					return
 				}
 
-				requestNamespace := namespace
-				if requestNamespace == "" {
-					requestNamespace = transactionRequestNamespace(r.URL.Path)
-				}
-				if request.Namespace != "" && requestNamespace != "" && request.Namespace != requestNamespace {
-					http.Error(w, "metadata.namespace does not match request namespace", http.StatusBadRequest)
-					return
-				}
-				if requestNamespace == "" {
-					requestNamespace = request.Namespace
-				}
-
-				decisionName := request.Name
-				if decisionName == "" {
-					decisionName = name
-				}
-				if decisionName == "" {
-					decisionName = fmt.Sprintf("decision-%d", time.Now().UnixNano())
-				}
-
-				response, err := invokeDecisionMaker(ctx, endpoint, &decisionSystemOneRequest{
-					State:     request.State,
-					Questions: request.Questions,
-				})
-				if err != nil {
-					decisionLogger.Error(err, "decision maker call failed", "endpoint", endpoint, "name", decisionName, "namespace", requestNamespace)
-					http.Error(w, err.Error(), http.StatusBadGateway)
-					return
-				}
-
-				contentType, _ := responseContent(r.Header)
-				container := map[string]interface{}{
-					"apiVersion": Group + "/" + Version,
-					"kind":       "DecisionResponse",
-					"metadata": map[string]interface{}{
-						"name":              decisionName,
-						"namespace":         requestNamespace,
-						"creationTimestamp": metav1.Now().Format(time.RFC3339),
-					},
-					"spec": map[string]interface{}{
-						"answers": response.Answers,
-						"usage":   response.Usage,
-					},
-				}
-
-				if err := writeResponse(w, http.StatusCreated, container, contentType); err != nil {
-					decisionLogger.Info("Write error", "error", err)
-				}
+				callAndWrite(ctx, endpoint, decisionName, requestNamespace, request, w, r)
 			},
 		},
 	}

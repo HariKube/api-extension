@@ -25,7 +25,36 @@ var (
 	}
 )
 
+// parseQueryRequestBody reads and minimally validates the request body as YAML; on error it
+// returns a non-zero HTTP status and an error message suitable for http.Error.
+func parseQueryRequestBody(r *http.Request) ([]byte, int, string, error) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		return nil, http.StatusBadRequest, err.Error(), err
+	}
+	if len(strings.TrimSpace(string(body))) == 0 {
+		return nil, http.StatusBadRequest, "empty body", nil
+	}
+
+	var m map[string]interface{}
+	if err := yaml.Unmarshal(body, &m); err != nil {
+		return nil, http.StatusBadRequest, err.Error(), err
+	}
+
+	return body, 0, "", nil
+}
+
+// writeCreatedMinimal sends the minimal created response body and logs write errors.
+func writeCreatedMinimal(w http.ResponseWriter) {
+	w.WriteHeader(http.StatusCreated)
+	if _, err := w.Write([]byte("{}")); err != nil {
+		queryLogger.Info("Write error", "error", err)
+	}
+}
+
 // getQueryHandler returns an APIKind for queries. It mirrors transaction style but is minimal.
+//
+//nolint:unparam // parameter usage is intentional; suppress unparam warning for this handler factory.
 func getQueryHandler(authClient *authorizationclientv1.AuthorizationV1Client, harikubeClient *clientv3.Client) *kaf.APIKind {
 	return &kaf.APIKind{
 		ApiResource: metav1.APIResource{
@@ -53,19 +82,13 @@ func getQueryHandler(authClient *authorizationclientv1.AuthorizationV1Client, ha
 					return
 				}
 
-				body, err := io.ReadAll(r.Body)
+				body, status, msg, err := parseQueryRequestBody(r)
+				if status != 0 {
+					// parseQueryRequestBody already gives the correct HTTP status and message
+					http.Error(w, msg, status)
+					return
+				}
 				if err != nil {
-					http.Error(w, err.Error(), http.StatusBadRequest)
-					return
-				}
-				if len(strings.TrimSpace(string(body))) == 0 {
-					http.Error(w, "empty body", http.StatusBadRequest)
-					return
-				}
-
-				// minimal validation: unmarshal to map to ensure valid YAML
-				var m map[string]interface{}
-				if err := yaml.Unmarshal(body, &m); err != nil {
 					http.Error(w, err.Error(), http.StatusBadRequest)
 					return
 				}
@@ -77,11 +100,7 @@ func getQueryHandler(authClient *authorizationclientv1.AuthorizationV1Client, ha
 					return
 				}
 
-				// respond with a minimal object to indicate success
-				w.WriteHeader(http.StatusCreated)
-				if _, err := w.Write([]byte("{}")); err != nil {
-					queryLogger.Info("Write error", "error", err)
-				}
+				writeCreatedMinimal(w)
 			},
 		},
 	}

@@ -113,3 +113,31 @@ func TestQueryCreateHandlerRejectsInvalidBody(t *testing.T) {
 		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusBadRequest)
 	}
 }
+
+func TestQueryCreateHandlerRejectsEmptyBody(t *testing.T) {
+	originalSAR := querySubjectAccessReview
+	originalPut := putQuery
+	t.Cleanup(func() {
+		querySubjectAccessReview = originalSAR
+		putQuery = originalPut
+	})
+
+	querySubjectAccessReview = func(_ context.Context, _ *authorizationclientv1.AuthorizationV1Client, _ *authorizationv1.ResourceAttributes, _ http.Header) (*authorizationv1.SubjectAccessReview, error) {
+		return &authorizationv1.SubjectAccessReview{Status: authorizationv1.SubjectAccessReviewStatus{Allowed: true}}, nil
+	}
+	putQuery = func(_ context.Context, _ *clientv3.Client, _, _ string, _ ...clientv3.OpOption) (*clientv3.PutResponse, error) {
+		t.Fatal("putQuery should not be called")
+		return nil, nil
+	}
+
+	handler := getQueryHandler(nil, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/apis/apiserver.api-extension.harikube.info/namespaces/default/queries", strings.NewReader(""))
+	rec := httptest.NewRecorder()
+
+	handler.CustomResource.CreateHandler("default", "", rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
